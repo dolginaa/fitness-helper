@@ -1,0 +1,46 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: fitness
+      POSTGRES_PASSWORD: fitness
+      POSTGRES_DB: fitness
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U fitness -d fitness"]
+      interval: 3s
+      timeout: 5s
+      retries: 10
+
+  migrate:
+    profiles: ["migrate"]
+    image: migrate/migrate:v4.17.1
+    depends_on:
+      postgres:
+        condition: service_healthy
+    volumes:
+      - ./migrations:/migrations
+    command:
+      [
+        "-path=/migrations",
+        "-database=postgres://fitness:fitness@postgres:5432/fitness?sslmode=disable",
+        "up",
+      ]
+
+  bot:
+    build: .
+    depends_on:
+      postgres:
+        condition: service_healthy
+    env_file:
+      - .env
+    environment:
+      DATABASE_URL: postgres://fitness:fitness@postgres:5432/fitness?sslmode=disable
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+    restart: unless-stopped
+
+volumes:
+  pgdata:

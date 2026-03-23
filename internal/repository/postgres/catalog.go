@@ -1,0 +1,71 @@
+package postgres
+
+import (
+	"context"
+
+	"github.com/adolgina/fitness-helper/internal/domain"
+	"github.com/adolgina/fitness-helper/internal/repository/sqlcgen"
+)
+
+type Catalog struct {
+	q *sqlcgen.Queries
+}
+
+func NewCatalog(q *sqlcgen.Queries) *Catalog {
+	return &Catalog{q: q}
+}
+
+func (c *Catalog) ListMuscleGroups(ctx context.Context) ([]domain.MuscleGroup, error) {
+	rows, err := c.q.ListMuscleGroups(ctx)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]domain.MuscleGroup, 0, len(rows))
+	for _, r := range rows {
+		out = append(out, domain.MuscleGroup{ID: int(r.ID), Name: r.Name})
+	}
+	return out, nil
+}
+
+func (c *Catalog) ListExercisesByGroup(ctx context.Context, muscleGroupID int) ([]domain.Exercise, error) {
+	rows, err := c.q.ListExercisesByMuscleGroup(ctx, int32(muscleGroupID))
+	if err != nil {
+		return nil, err
+	}
+	out := make([]domain.Exercise, 0, len(rows))
+	for _, r := range rows {
+		out = append(out, domain.Exercise{
+			ID:            int(r.ID),
+			Name:          r.Name,
+			MuscleGroupID: int(r.MuscleGroupID),
+		})
+	}
+	return out, nil
+}
+
+func (c *Catalog) GetExercise(ctx context.Context, id int) (domain.Exercise, error) {
+	r, err := c.q.GetExerciseByID(ctx, int32(id))
+	if err != nil {
+		return domain.Exercise{}, mapErr(err)
+	}
+	return domain.Exercise{
+		ID:            int(r.ID),
+		Name:          r.Name,
+		MuscleGroupID: int(r.MuscleGroupID),
+	}, nil
+}
+
+func (c *Catalog) GetExerciseInGroup(ctx context.Context, exerciseID, muscleGroupID int) (domain.Exercise, error) {
+	r, err := c.q.GetExerciseByIDAndGroup(ctx, sqlcgen.GetExerciseByIDAndGroupParams{
+		ID:            int32(exerciseID),
+		MuscleGroupID: int32(muscleGroupID),
+	})
+	if err != nil {
+		return domain.Exercise{}, mapErr(err)
+	}
+	return domain.Exercise{
+		ID:            int(r.ID),
+		Name:          r.Name,
+		MuscleGroupID: int(r.MuscleGroupID),
+	}, nil
+}
