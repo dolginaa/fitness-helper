@@ -1,0 +1,209 @@
+/* Colors come from the Telegram theme; the fallbacks are used in a plain browser. */
+:root {
+  --fb-bg: #f1f1f5;
+  --fb-card: #ffffff;
+  --fb-text: #0b0b0b;
+  --fb-hint: #77777c;
+  --fb-accent: #2a78d6;
+  --fb-accent-text: #ffffff;
+  --fb-danger: #d03b3b;
+  --good: #0a7f2e;
+
+  --bg: var(--tg-theme-secondary-bg-color, var(--fb-bg));
+  --card: var(--tg-theme-section-bg-color, var(--tg-theme-bg-color, var(--fb-card)));
+  --text: var(--tg-theme-text-color, var(--fb-text));
+  --hint: var(--tg-theme-hint-color, var(--fb-hint));
+  --accent: var(--tg-theme-button-color, var(--fb-accent));
+  --accent-text: var(--tg-theme-button-text-color, var(--fb-accent-text));
+  --danger: var(--tg-theme-destructive-text-color, var(--fb-danger));
+  --line: color-mix(in srgb, var(--hint) 28%, transparent);
+  --wash: color-mix(in srgb, var(--accent) 12%, transparent);
+
+  --radius: 14px;
+  --gap: 16px;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --fb-bg: #0f0f10;
+    --fb-card: #1c1c1e;
+    --fb-text: #ffffff;
+    --fb-hint: #98989f;
+    --fb-accent: #3987e5;
+    --fb-danger: #e66767;
+    --good: #3fcf6b;
+  }
+}
+
+* { box-sizing: border-box; }
+[hidden] { display: none !important; }
+
+html, body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font: 16px/1.35 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  -webkit-text-size-adjust: 100%;
+  -webkit-tap-highlight-color: transparent;
+}
+
+#app {
+  max-width: 560px;
+  margin: 0 auto;
+  padding: var(--gap) var(--gap) calc(var(--gap) * 2 + env(safe-area-inset-bottom));
+}
+
+h1 {
+  margin: 4px 0 2px;
+  font-size: 26px;
+  line-height: 1.15;
+  font-weight: 700;
+  overflow-wrap: anywhere;
+}
+
+.sub { margin: 0 0 var(--gap); color: var(--hint); font-size: 15px; }
+.section { margin: 20px 4px 8px; color: var(--hint); font-size: 13px; text-transform: uppercase; letter-spacing: .04em; }
+.note { margin: 8px 4px 0; color: var(--hint); font-size: 14px; }
+
+.back {
+  display: inline-flex;
+  align-items: center;
+  min-height: 36px;
+  margin: -6px 0 2px -6px;
+  padding: 0 6px;
+  border: 0;
+  background: none;
+  color: var(--accent);
+  font: inherit;
+}
+/* Inside Telegram the native back button is used instead. */
+.in-telegram .back { display: none; }
+
+.card { background: var(--card); border-radius: var(--radius); overflow: hidden; }
+.card + .card { margin-top: 12px; }
+.pad { padding: 14px 16px; }
+
+/* A list row: a title with an optional second line and something on the right. */
+.row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  min-height: 52px;
+  padding: 10px 16px;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+}
+.row + .row { border-top: 1px solid var(--line); }
+button.row:active { background: var(--wash); }
+.row .main { flex: 1; min-width: 0; }
+.row .title { overflow-wrap: anywhere; }
+.row .desc { margin-top: 2px; color: var(--hint); font-size: 14px; overflow-wrap: anywhere; }
+.row .aside { color: var(--hint); font-size: 15px; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.row .chev { color: var(--hint); font-size: 20px; line-height: 1; }
+.row .mark { width: 22px; text-align: center; color: var(--good); }
+.row .num { width: 22px; color: var(--hint); font-variant-numeric: tabular-nums; }
+
+.grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.tile {
+  min-height: 64px;
+  padding: 12px 14px;
+  border: 0;
+  border-radius: var(--radius);
+  background: var(--card);
+  color: inherit;
+  font: inherit;
+  font-weight: 600;
+  text-align: left;
+}
+.tile:active { background: var(--wash); }
+.tile::first-letter { text-transform: uppercase; }
+
+.btn {
+  display: block;
+  width: 100%;
+  min-height: 50px;
+  margin-top: 12px;
+  padding: 0 16px;
+  border: 0;
+  border-radius: var(--radius);
+  background: var(--accent);
+  color: var(--accent-text);
+  font: inherit;
+  font-weight: 600;
+}
+.btn:active { opacity: .85; }
+.btn:disabled { opacity: .5; }
+.btn.quiet { background: var(--wash); color: var(--accent); }
+.btn.danger { background: color-mix(in srgb, var(--danger) 14%, transparent); color: var(--danger); }
+.pair { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.link { border: 0; background: none; padding: 6px 0; color: var(--accent); font: inherit; }
+.link.danger { color: var(--danger); }
+
+/* The set form: two steppers. */
+.stepper { display: flex; align-items: center; gap: 10px; padding: 10px 16px; }
+.stepper + .stepper { border-top: 1px solid var(--line); }
+.stepper label { flex: 1; }
+.stepper button {
+  width: 48px;
+  height: 48px;
+  border: 0;
+  border-radius: 50%;
+  background: var(--wash);
+  color: var(--accent);
+  font-size: 26px;
+  line-height: 1;
+}
+.stepper button:active { background: color-mix(in srgb, var(--accent) 26%, transparent); }
+.stepper input {
+  width: 88px;
+  height: 48px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-size: 22px;
+  font-weight: 600;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+.stepper input:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
+
+.field {
+  width: 100%;
+  height: 48px;
+  padding: 0 14px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--card);
+  color: inherit;
+  font: inherit;
+}
+.field:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
+
+.stats { display: flex; gap: 20px; flex-wrap: wrap; }
+.stat b { display: block; font-size: 22px; font-weight: 700; font-variant-numeric: tabular-nums; }
+.stat span { color: var(--hint); font-size: 13px; }
+
+/* Charts are drawn on a light surface, so they sit in their own rounded frame. */
+.chart { display: block; width: 100%; height: auto; margin-top: 12px; border-radius: var(--radius); background: #fcfcfb; }
+
+.empty { padding: 28px 16px; color: var(--hint); text-align: center; }
+.loading { padding: 48px 0; color: var(--hint); text-align: center; }
+
+#toast {
+  position: fixed;
+  left: 50%;
+  bottom: calc(20px + env(safe-area-inset-bottom));
+  transform: translateX(-50%);
+  max-width: calc(100% - 32px);
+  padding: 10px 16px;
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--text) 88%, transparent);
+  color: var(--bg);
+  font-size: 15px;
+}

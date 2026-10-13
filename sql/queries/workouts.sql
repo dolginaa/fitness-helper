@@ -18,8 +18,8 @@ SELECT id, user_id, date, status FROM workouts WHERE id = $1 AND user_id = $2;
 -- name: CompleteWorkout :exec
 UPDATE workouts SET status = 'completed' WHERE id = $1 AND user_id = $2;
 
--- name: ListCompletedWorkoutsForUser :many
-SELECT id, user_id, date, status FROM workouts WHERE user_id = $1 AND status = 'completed' ORDER BY date DESC LIMIT $2;
+-- name: DeleteWorkout :exec
+DELETE FROM workouts WHERE id = $1 AND user_id = $2;
 
 -- name: GetLastWorkoutExerciseData :one
 SELECT we.sets, w.date
@@ -35,5 +35,5 @@ VALUES ($1, $2, $3)
 ON CONFLICT (workout_id, exercise_id) DO UPDATE SET sets = EXCLUDED.sets
 RETURNING id, workout_id, exercise_id, sets;
 
--- name: ListWorkoutExercisesForWorkout :many
-SELECT id, workout_id, exercise_id, sets FROM workout_exercises WHERE workout_id = $1;
+-- name: DeleteWorkoutExercise :exec
+DELETE FROM workout_exercises WHERE workout_id = $1 AND exercise_id = $2;

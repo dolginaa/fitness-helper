@@ -27,9 +27,19 @@ type Workout struct {
 	Status WorkoutStatus
 }
 
+// Upper bounds of a single set; anything above is treated as a typo.
+const (
+	MaxReps   = 1000
+	MaxWeight = 1000
+)
+
 type SetEntry struct {
 	Reps   int     `json:"reps"`
 	Weight float64 `json:"weight"`
+}
+
+func (s SetEntry) Valid() bool {
+	return s.Reps >= 1 && s.Reps <= MaxReps && s.Weight >= 0 && s.Weight <= MaxWeight
 }
 
 type WorkoutExercise struct {

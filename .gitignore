@@ -1,6 +1,10 @@
 /bin/
+/main
+/data/
 /dist/
 .env
 *.exe
 coverage.out
 .DS_Store
+/export.json
+/archive.zip

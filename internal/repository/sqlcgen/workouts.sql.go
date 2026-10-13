@@ -66,6 +66,34 @@ func (q *Queries) CreateWorkout(ctx context.Context, userID int64) (Workout, err
 	return i, err
 }
 
+const deleteWorkout = `-- name: DeleteWorkout :exec
+DELETE FROM workouts WHERE id = $1 AND user_id = $2
+`
+
+type DeleteWorkoutParams struct {
+	ID     int32 `json:"id"`
+	UserID int64 `json:"user_id"`
+}
+
+func (q *Queries) DeleteWorkout(ctx context.Context, arg DeleteWorkoutParams) error {
+	_, err := q.db.Exec(ctx, deleteWorkout, arg.ID, arg.UserID)
+	return err
+}
+
+const deleteWorkoutExercise = `-- name: DeleteWorkoutExercise :exec
+DELETE FROM workout_exercises WHERE workout_id = $1 AND exercise_id = $2
+`
+
+type DeleteWorkoutExerciseParams struct {
+	WorkoutID  int32 `json:"workout_id"`
+	ExerciseID int32 `json:"exercise_id"`
+}
+
+func (q *Queries) DeleteWorkoutExercise(ctx context.Context, arg DeleteWorkoutExerciseParams) error {
+	_, err := q.db.Exec(ctx, deleteWorkoutExercise, arg.WorkoutID, arg.ExerciseID)
+	return err
+}
+
 const getActiveWorkoutForUser = `-- name: GetActiveWorkoutForUser :one
 SELECT id, user_id, date, status FROM workouts WHERE user_id = $1 AND status = 'active' LIMIT 1
 `
@@ -127,69 +155,6 @@ func (q *Queries) GetWorkoutByIDForUser(ctx context.Context, arg GetWorkoutByIDF
 		&i.Status,
 	)
 	return i, err
-}
-
-const listCompletedWorkoutsForUser = `-- name: ListCompletedWorkoutsForUser :many
-SELECT id, user_id, date, status FROM workouts WHERE user_id = $1 AND status = 'completed' ORDER BY date DESC LIMIT $2
-`
-
-type ListCompletedWorkoutsForUserParams struct {
-	UserID int64 `json:"user_id"`
-	Limit  int32 `json:"limit"`
-}
-
-func (q *Queries) ListCompletedWorkoutsForUser(ctx context.Context, arg ListCompletedWorkoutsForUserParams) ([]Workout, error) {
-	rows, err := q.db.Query(ctx, listCompletedWorkoutsForUser, arg.UserID, arg.Limit)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	items := []Workout{}
-	for rows.Next() {
-		var i Workout
-		if err := rows.Scan(
-			&i.ID,
-			&i.UserID,
-			&i.Date,
-			&i.Status,
-		); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
-const listWorkoutExercisesForWorkout = `-- name: ListWorkoutExercisesForWorkout :many
-SELECT id, workout_id, exercise_id, sets FROM workout_exercises WHERE workout_id = $1
-`
-
-func (q *Queries) ListWorkoutExercisesForWorkout(ctx context.Context, workoutID int32) ([]WorkoutExercise, error) {
-	rows, err := q.db.Query(ctx, listWorkoutExercisesForWorkout, workoutID)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	items := []WorkoutExercise{}
-	for rows.Next() {
-		var i WorkoutExercise
-		if err := rows.Scan(
-			&i.ID,
-			&i.WorkoutID,
-			&i.ExerciseID,
-			&i.Sets,
-		); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
 }
 
 const upsertWorkoutExercise = `-- name: UpsertWorkoutExercise :one

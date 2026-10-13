@@ -39,3 +39,9 @@ CREATE TABLE user_workout_state (
     state JSONB NOT NULL DEFAULT '{}'::jsonb,
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+CREATE TABLE user_settings (
+    user_id BIGINT PRIMARY KEY,
+    weekly_backup_enabled BOOLEAN NOT NULL DEFAULT FALSE,
+    last_backup_at TIMESTAMPTZ
+);

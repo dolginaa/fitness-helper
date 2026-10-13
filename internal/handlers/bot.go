@@ -3,250 +3,269 @@ package handlers
 import (
 	"context"
 	"errors"
-	"fmt"
 	"log/slog"
 	"strconv"
 	"strings"
+	"sync"
 
+	"github.com/adolgina/fitness-helper/internal/chat"
 	"github.com/adolgina/fitness-helper/internal/domain"
 	"github.com/adolgina/fitness-helper/internal/keyboards"
 	"github.com/adolgina/fitness-helper/internal/usecase"
-	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
+	"github.com/adolgina/fitness-helper/internal/view"
 )
 
+// ChartRenderer turns progress data into an image.
+type ChartRenderer interface {
+	ExerciseProgress(name string, points []domain.ExerciseProgressPoint) ([]byte, error)
+	MuscleGroupProgress(groupName string, series []domain.ExerciseProgressSeries) ([]byte, error)
+}
+
+// Bot is the chat dialog. It does not know how messages reach Telegram: that is the Messenger's job.
 type Bot struct {
-	Svc *usecase.Service
-	Log *slog.Logger
+	svc    *usecase.Service
+	log    *slog.Logger
+	tg     chat.Messenger
+	charts ChartRenderer
+	// webAppURL is the public address of the Mini App; empty when it is not served.
+	webAppURL string
+
+	mu            sync.Mutex
+	pendingImport map[int64][]byte
 }
 
-func (b *Bot) HandleUpdate(ctx context.Context, api *tgbotapi.BotAPI, u tgbotapi.Update) {
-	if u.Message != nil {
-		b.handleMessage(ctx, api, u.Message)
-		return
-	}
-	if u.CallbackQuery != nil {
-		b.handleCallback(ctx, api, u.CallbackQuery)
+func NewBot(svc *usecase.Service, log *slog.Logger, tg chat.Messenger, charts ChartRenderer, webAppURL string) *Bot {
+	return &Bot{
+		svc:           svc,
+		log:           log,
+		tg:            tg,
+		charts:        charts,
+		webAppURL:     webAppURL,
+		pendingImport: make(map[int64][]byte),
 	}
 }
 
-func (b *Bot) handleMessage(ctx context.Context, api *tgbotapi.BotAPI, m *tgbotapi.Message) {
-	userID := m.From.ID
-	chatID := m.Chat.ID
-	if m.IsCommand() {
-		b.handleCommand(ctx, api, m)
-		return
-	}
-	_, st, err := b.Svc.CurrentState(ctx, userID)
+// Setup fills the command menu of the bot and, if the Mini App is served, its menu button.
+func (b *Bot) Setup(ctx context.Context) error {
+	err := b.tg.SetCommands(ctx, []chat.Command{
+		{Name: "startnew", Description: "Новая тренировка"},
+		{Name: "history", Description: "История тренировок"},
+		{Name: "progress", Description: "Прогресс и последние веса"},
+		{Name: "backup", Description: "Бекап и импорт"},
+		{Name: "start", Description: "Главное меню"},
+	})
 	if err != nil {
-		b.replyErr(api, chatID, err)
-		return
+		return err
 	}
-	if st.Phase == domain.PhaseLoggingSets {
-		_, err := b.Svc.ProcessLogInput(ctx, userID, m.Text)
-		if err != nil {
-			b.sendText(api, chatID, "Введите целое число повторений или вес (кг), например: 10 или 52.5")
-			return
-		}
-		_, st2, _ := b.Svc.CurrentState(ctx, userID)
-		if st2.Awaiting == "weight" {
-			b.sendText(api, chatID, "Теперь вес (кг) для этого подхода.")
-		} else {
-			b.sendText(api, chatID, "Подход записан. Введите повторения для следующего подхода или нажмите «Завершить упражнение».")
-		}
-		return
+	if b.webAppURL == "" {
+		return nil
 	}
-	b.sendText(api, chatID, "Используйте кнопки меню или команды /start, /startnew, /history, /last")
+	return b.tg.SetMenuWebApp(ctx, view.WebAppButton, b.webAppURL)
 }
 
-func (b *Bot) handleCommand(ctx context.Context, api *tgbotapi.BotAPI, m *tgbotapi.Message) {
-	userID := m.From.ID
-	chatID := m.Chat.ID
-	cmd := m.Command()
-	switch cmd {
-	case "start":
-		msg := "Привет! Я помогаю вести силовые тренировки.\n\nКоманды:\n/startnew — новая тренировка\n/history — история\n/last — последние веса по упражнению"
-		cfg := tgbotapi.NewMessage(chatID, msg)
-		cfg.ReplyMarkup = keyboards.MainMenu()
-		api.Send(cfg)
-	case "startnew":
-		b.startNewWorkout(ctx, api, chatID, userID)
-	case "history":
-		ws, err := b.Svc.History(ctx, userID, 15)
-		if err != nil {
-			b.replyErr(api, chatID, err)
-			return
+func (b *Bot) HandleUpdate(ctx context.Context, u chat.Update) {
+	defer func() {
+		if r := recover(); r != nil {
+			b.log.Error("handler panic", "panic", r)
 		}
-		if len(ws) == 0 {
-			b.sendText(api, chatID, "Завершённых тренировок пока нет.")
-			return
-		}
-		var sb strings.Builder
-		sb.WriteString("Последние тренировки:\n")
-		for _, w := range ws {
-			sb.WriteString(fmt.Sprintf("— %s (id %d)\n", w.Date.Format("2006-01-02 15:04"), w.ID))
-		}
-		b.sendText(api, chatID, sb.String())
-	case "last":
-		if err := b.Svc.BeginLastCommand(ctx, userID); err != nil {
-			b.replyErr(api, chatID, err)
-			return
-		}
-		groups, err := b.Svc.Catalog.ListMuscleGroups(ctx)
-		if err != nil {
-			b.replyErr(api, chatID, err)
-			return
-		}
-		cfg := tgbotapi.NewMessage(chatID, "Выберите группу мышц для просмотра последних весов:")
-		cfg.ReplyMarkup = keyboards.LastMuscleGroups(groups)
-		api.Send(cfg)
-	default:
-		b.sendText(api, chatID, "Неизвестная команда. /start")
-	}
-}
-
-func (b *Bot) startNewWorkout(ctx context.Context, api *tgbotapi.BotAPI, chatID int64, userID int64) {
-	if _, err := b.Svc.StartNewWorkout(ctx, userID); err != nil {
-		b.replyErr(api, chatID, err)
-		return
-	}
-	groups, err := b.Svc.Catalog.ListMuscleGroups(ctx)
-	if err != nil {
-		b.replyErr(api, chatID, err)
-		return
-	}
-	cfg := tgbotapi.NewMessage(chatID, "Тренировка начата. Выберите группу мышц:")
-	cfg.ReplyMarkup = keyboards.MuscleGroups(groups)
-	api.Send(cfg)
-}
-
-func (b *Bot) handleCallback(ctx context.Context, api *tgbotapi.BotAPI, cq *tgbotapi.CallbackQuery) {
-	if cq.Message == nil {
-		return
-	}
-	userID := cq.From.ID
-	chatID := cq.Message.Chat.ID
-	data := cq.Data
-	if _, err := api.Request(tgbotapi.NewCallback(cq.ID, "")); err != nil {
-		b.Log.Debug("callback answer", "err", err)
-	}
-
+	}()
 	switch {
-	case data == keyboards.CallbackNewWorkout:
-		b.startNewWorkout(ctx, api, chatID, userID)
-	case strings.HasPrefix(data, "mg:"):
-		id, err := strconv.Atoi(strings.TrimPrefix(data, "mg:"))
-		if err != nil {
-			return
-		}
-		if err := b.Svc.SelectMuscleGroup(ctx, userID, id); err != nil {
-			b.replyErr(api, chatID, err)
-			return
-		}
-		rows, err := b.Svc.ListExercisesForCurrentGroup(ctx, userID)
-		if err != nil {
-			b.replyErr(api, chatID, err)
-			return
-		}
-		msg := tgbotapi.NewEditMessageTextAndMarkup(chatID, cq.Message.MessageID,
-			"Упражнения (последние данные в скобках):", keyboards.Exercises(rows))
-		api.Send(msg)
-	case strings.HasPrefix(data, "ex:"):
-		id, err := strconv.Atoi(strings.TrimPrefix(data, "ex:"))
-		if err != nil {
-			return
-		}
-		ex, last, err := b.Svc.BeginExercise(ctx, userID, id)
-		if err != nil {
-			b.replyErr(api, chatID, err)
-			return
-		}
-		lastLine := usecase.FormatSets(last)
-		text := fmt.Sprintf("%s\n\nПрошлый раз: %s\n\nВведите повторения для первого подхода (целое число).", ex.Name, lastLine)
-		msg := tgbotapi.NewEditMessageTextAndMarkup(chatID, cq.Message.MessageID, text, keyboards.WorkoutExerciseActions())
-		api.Send(msg)
-	case data == "done":
-		if err := b.Svc.FinishExercise(ctx, userID); err != nil {
-			b.sendText(api, chatID, "Нельзя завершить: нет подходов или не та фаза. Сначала введите хотя бы один подход.")
-			return
-		}
-		rows, err := b.Svc.ListExercisesForCurrentGroup(ctx, userID)
-		if err != nil {
-			b.replyErr(api, chatID, err)
-			return
-		}
-		msg := tgbotapi.NewEditMessageTextAndMarkup(chatID, cq.Message.MessageID,
-			"Упражнение сохранено. Выберите следующее или действие:", keyboards.Exercises(rows))
-		api.Send(msg)
-		extra := tgbotapi.NewMessage(chatID, "Действия:")
-		extra.ReplyMarkup = keyboards.AfterExerciseMenu()
-		api.Send(extra)
-	case data == "next":
-		if err := b.Svc.NextMuscleGroup(ctx, userID); err != nil {
-			b.replyErr(api, chatID, err)
-			return
-		}
-		groups, err := b.Svc.Catalog.ListMuscleGroups(ctx)
-		if err != nil {
-			b.replyErr(api, chatID, err)
-			return
-		}
-		msg := tgbotapi.NewEditMessageTextAndMarkup(chatID, cq.Message.MessageID,
-			"Выберите группу мышц:", keyboards.MuscleGroups(groups))
-		api.Send(msg)
-	case data == "end":
-		if err := b.Svc.EndWorkout(ctx, userID); err != nil {
-			b.replyErr(api, chatID, err)
-			return
-		}
-		msg := tgbotapi.NewEditMessageText(chatID, cq.Message.MessageID, "Тренировка завершена. Хорошей работы!")
-		api.Send(msg)
-	case strings.HasPrefix(data, "lg:"):
-		id, err := strconv.Atoi(strings.TrimPrefix(data, "lg:"))
-		if err != nil {
-			return
-		}
-		if err := b.Svc.LastSelectGroup(ctx, userID, id); err != nil {
-			b.replyErr(api, chatID, err)
-			return
-		}
-		rows, err := b.Svc.ListExercisesWithLast(ctx, userID, id)
-		if err != nil {
-			b.replyErr(api, chatID, err)
-			return
-		}
-		edit := tgbotapi.NewEditMessageTextAndMarkup(chatID, cq.Message.MessageID,
-			"Выберите упражнение:", keyboards.LastExercises(rows))
-		api.Send(edit)
-	case strings.HasPrefix(data, "le:"):
-		id, err := strconv.Atoi(strings.TrimPrefix(data, "le:"))
-		if err != nil {
-			return
-		}
-		ex, sets, at, err := b.Svc.LastSelectExercise(ctx, userID, id)
-		if err != nil {
-			if errors.Is(err, domain.ErrNoLastExerciseData) {
-				b.sendText(api, chatID, "Нет сохранённых данных по этому упражнению.")
-			} else {
-				b.replyErr(api, chatID, err)
-			}
-			_ = b.Svc.ResetLastFlow(ctx, userID)
-			return
-		}
-		text := fmt.Sprintf("%s\nПоследняя тренировка: %s\n%s", ex.Name, at.Format("2006-01-02 15:04"), usecase.FormatSets(sets))
-		edit := tgbotapi.NewEditMessageText(chatID, cq.Message.MessageID, text)
-		api.Send(edit)
-		_ = b.Svc.ResetLastFlow(ctx, userID)
-	default:
-		b.sendText(api, chatID, "Неизвестное действие")
+	case u.Message != nil:
+		b.handleMessage(ctx, u.Message)
+	case u.Callback != nil:
+		b.handleCallback(ctx, u.Callback)
 	}
 }
 
-func (b *Bot) sendText(api *tgbotapi.BotAPI, chatID int64, text string) {
-	msg := tgbotapi.NewMessage(chatID, text)
-	api.Send(msg)
+func (b *Bot) handleMessage(ctx context.Context, m *chat.Message) {
+	userID := m.UserID
+	t := newMessage(m.ChatID)
+	if m.Document != nil {
+		b.onDocument(ctx, m)
+		return
+	}
+	if cmd, args, ok := parseCommand(m.Text); ok {
+		b.handleCommand(ctx, t, userID, cmd, args)
+		return
+	}
+	st, err := b.svc.SessionState(ctx, userID)
+	if err != nil {
+		b.fail(ctx, t, err)
+		return
+	}
+	switch st.Phase {
+	case domain.PhaseLoggingSets:
+		b.onSetInput(ctx, t, userID, m.Text)
+	case domain.PhaseAddingExercise:
+		b.onExerciseName(ctx, t, userID, m.Text)
+	default:
+		b.showMenu(ctx, t, userID)
+	}
 }
 
-func (b *Bot) replyErr(api *tgbotapi.BotAPI, chatID int64, err error) {
-	b.Log.Error("handler error", "err", err)
-	b.sendText(api, chatID, "Ошибка: "+err.Error())
+// parseCommand splits "/workout@my_bot 15.03" into "workout" and "15.03".
+func parseCommand(text string) (cmd, args string, ok bool) {
+	if !strings.HasPrefix(text, "/") {
+		return "", "", false
+	}
+	cmd, args, _ = strings.Cut(text[1:], " ")
+	cmd, _, _ = strings.Cut(cmd, "@")
+	return strings.ToLower(cmd), strings.TrimSpace(args), cmd != ""
+}
+
+func (b *Bot) handleCommand(ctx context.Context, t target, userID int64, cmd, args string) {
+	switch cmd {
+	case "start", "menu", "help":
+		b.showMenu(ctx, t, userID)
+	case "startnew", "new":
+		b.onNewWorkout(ctx, t, userID, false)
+	case "history", "history6m":
+		b.showHistory(ctx, t, userID, 0)
+	case "workout":
+		b.onWorkoutByDate(ctx, t, userID, args)
+	case "progress", "last":
+		b.showProgressGroups(ctx, t)
+	case "backup":
+		b.showBackup(ctx, t, userID)
+	case "export":
+		b.onExport(ctx, t, userID)
+	case "import":
+		b.say(ctx, t.chatID, view.ImportHint)
+	case "backup_on":
+		b.onWeeklyBackup(ctx, t, userID, true)
+	case "backup_off":
+		b.onWeeklyBackup(ctx, t, userID, false)
+	default:
+		b.show(ctx, t, view.UnknownCommand, keyboards.Menu())
+	}
+}
+
+func (b *Bot) handleCallback(ctx context.Context, cq *chat.Callback) {
+	userID := cq.UserID
+	t := target{chatID: cq.ChatID, messageID: cq.MessageID}
+	action, args := parseCallback(cq.Data)
+	// arg returns the i-th numeric argument of the callback (0 if absent).
+	arg := func(i int) int {
+		if i < len(args) {
+			return args[i]
+		}
+		return 0
+	}
+
+	switch action {
+	case keyboards.CallbackMenu:
+		b.showMenu(ctx, t, userID)
+
+	case keyboards.CallbackNewWorkout:
+		b.onNewWorkout(ctx, t, userID, false)
+	case keyboards.CallbackNewWorkoutForce:
+		b.onNewWorkout(ctx, t, userID, true)
+	case keyboards.CallbackResume:
+		b.showWorkout(ctx, t, userID)
+	case keyboards.CallbackMuscleGroup:
+		b.onMuscleGroup(ctx, t, userID, arg(0))
+	case keyboards.CallbackExercise:
+		b.onExercise(ctx, t, userID, arg(0))
+	case keyboards.CallbackRepeatSet:
+		b.onRepeatSet(ctx, t, userID, arg(0))
+	case keyboards.CallbackUndoSet:
+		b.onUndoSet(ctx, t, userID, arg(0))
+	case keyboards.CallbackExercises:
+		b.onBackToExercises(ctx, t, userID)
+	case keyboards.CallbackGroups:
+		b.onBackToGroups(ctx, t, userID)
+	case keyboards.CallbackAddExercise:
+		b.onAddExercise(ctx, t, userID)
+	case keyboards.CallbackEndWorkout:
+		b.onEndWorkout(ctx, t, userID, false)
+	case keyboards.CallbackEndWorkoutForce:
+		b.onEndWorkout(ctx, t, userID, true)
+
+	case keyboards.CallbackHistory:
+		b.showHistory(ctx, t, userID, arg(0))
+	case keyboards.CallbackWorkoutID:
+		b.showHistoryWorkout(ctx, t, userID, arg(0), arg(1))
+
+	// "lg" and "le" are buttons of the former /last dialog.
+	case keyboards.CallbackProgress, "lg":
+		if len(args) == 0 {
+			b.showProgressGroups(ctx, t)
+		} else {
+			b.showProgressGroup(ctx, t, userID, arg(0))
+		}
+	case keyboards.CallbackProgressExercise, "le":
+		b.sendExerciseProgress(ctx, t.chatID, userID, arg(0))
+	case keyboards.CallbackChartMg:
+		b.sendGroupChart(ctx, t.chatID, userID, arg(0))
+	case keyboards.CallbackChartsAll:
+		b.sendGroupExerciseCharts(ctx, t.chatID, userID, arg(0))
+
+	case keyboards.CallbackBackup:
+		b.showBackup(ctx, t, userID)
+	case keyboards.CallbackExport:
+		b.onExport(ctx, t, userID)
+	case keyboards.CallbackBackupOn:
+		b.onWeeklyBackup(ctx, t, userID, true)
+	case keyboards.CallbackBackupOff:
+		b.onWeeklyBackup(ctx, t, userID, false)
+	case keyboards.CallbackImpMerge:
+		b.onImport(ctx, t, userID, domain.ImportModeMerge)
+	case keyboards.CallbackImpReplace:
+		b.show(ctx, t, view.ImportReplaceAsk, keyboards.ImportReplaceConfirm())
+	case keyboards.CallbackImpReplaceForce:
+		b.onImport(ctx, t, userID, domain.ImportModeReplace)
+	case keyboards.CallbackImpCancel:
+		b.takePendingImport(userID)
+		b.show(ctx, t, view.ImportCancelled, keyboards.Menu())
+
+	default:
+		b.show(ctx, newMessage(t.chatID), view.StaleButton, keyboards.Menu())
+	}
+
+	if err := b.tg.AnswerCallback(ctx, *cq); err != nil {
+		b.log.Debug("callback answer", "err", err)
+	}
+}
+
+// parseCallback splits "wid:5:1" into the action "wid" and the arguments [5 1].
+func parseCallback(data string) (string, []int) {
+	parts := strings.Split(data, ":")
+	args := make([]int, 0, len(parts)-1)
+	for _, p := range parts[1:] {
+		n, err := strconv.Atoi(p)
+		if err != nil {
+			return "", nil
+		}
+		args = append(args, n)
+	}
+	return parts[0], args
+}
+
+func (b *Bot) showMenu(ctx context.Context, t target, userID int64) {
+	w, active, err := b.svc.ActiveWorkout(ctx, userID)
+	if err != nil {
+		b.fail(ctx, t, err)
+		return
+	}
+	if active {
+		b.show(ctx, t, view.MainMenu(&w), keyboards.MainMenu(true, b.webAppURL))
+		return
+	}
+	b.show(ctx, t, view.MainMenu(nil), keyboards.MainMenu(false, b.webAppURL))
+}
+
+// fail tells the user what went wrong in words they can act on.
+func (b *Bot) fail(ctx context.Context, t target, err error) {
+	t = newMessage(t.chatID)
+	switch {
+	case errors.Is(err, domain.ErrNoActiveWorkout):
+		b.show(ctx, t, view.NoActiveWorkout, keyboards.NoWorkout())
+	case errors.Is(err, domain.ErrInvalidState):
+		b.show(ctx, t, view.StaleButton, keyboards.Stale())
+	case errors.Is(err, domain.ErrNotFound):
+		b.show(ctx, t, view.NotFound, keyboards.Menu())
+	default:
+		b.log.Error("handler error", "err", err)
+		b.show(ctx, t, view.Failure, keyboards.Menu())
+	}
 }

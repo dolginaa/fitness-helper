@@ -40,7 +40,14 @@ services:
     environment:
       DATABASE_URL: postgres://fitness:fitness@postgres:5432/fitness?sslmode=disable
       LOG_LEVEL: ${LOG_LEVEL:-info}
+      TZ: ${TZ:-Europe/Moscow}
+    volumes:
+      - botdata:/data
+    # The Mini App (WEBAPP_ADDR=:8080). Put an HTTPS reverse proxy or a tunnel in front of it.
+    ports:
+      - "127.0.0.1:8080:8080"
     restart: unless-stopped
 
 volumes:
   pgdata:
+  botdata:

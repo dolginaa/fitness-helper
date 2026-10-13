@@ -6,6 +6,8 @@ package sqlcgen
 
 import (
 	"context"
+
+	"github.com/jackc/pgx/v5/pgtype"
 )
 
 type Querier interface {
@@ -14,18 +16,35 @@ type Querier interface {
 	CompleteAllActiveWorkoutsForUser(ctx context.Context, userID int64) error
 	CompleteWorkout(ctx context.Context, arg CompleteWorkoutParams) error
 	CreateWorkout(ctx context.Context, userID int64) (Workout, error)
+	DeleteUserWorkouts(ctx context.Context, userID int64) error
+	DeleteWorkout(ctx context.Context, arg DeleteWorkoutParams) error
+	DeleteWorkoutExercise(ctx context.Context, arg DeleteWorkoutExerciseParams) error
+	ExportUserWorkoutRows(ctx context.Context, userID int64) ([]ExportUserWorkoutRowsRow, error)
 	GetActiveWorkoutForUser(ctx context.Context, userID int64) (Workout, error)
 	GetExerciseByID(ctx context.Context, id int32) (Exercise, error)
-	GetExerciseByIDAndGroup(ctx context.Context, arg GetExerciseByIDAndGroupParams) (Exercise, error)
+	GetExerciseByNameAndGroup(ctx context.Context, arg GetExerciseByNameAndGroupParams) (Exercise, error)
 	GetLastWorkoutExerciseData(ctx context.Context, arg GetLastWorkoutExerciseDataParams) (GetLastWorkoutExerciseDataRow, error)
+	GetMuscleGroupByID(ctx context.Context, id int32) (MuscleGroup, error)
+	GetMuscleGroupByName(ctx context.Context, name string) (MuscleGroup, error)
+	GetUserSettings(ctx context.Context, userID int64) (UserSetting, error)
 	GetUserWorkoutState(ctx context.Context, userID int64) (UserWorkoutState, error)
 	GetWorkoutByIDForUser(ctx context.Context, arg GetWorkoutByIDForUserParams) (Workout, error)
-	ListCompletedWorkoutsForUser(ctx context.Context, arg ListCompletedWorkoutsForUserParams) ([]Workout, error)
+	GetWorkoutDetailRows(ctx context.Context, arg GetWorkoutDetailRowsParams) ([]GetWorkoutDetailRowsRow, error)
+	InsertExercise(ctx context.Context, arg InsertExerciseParams) (Exercise, error)
+	InsertImportedWorkout(ctx context.Context, arg InsertImportedWorkoutParams) (Workout, error)
+	InsertMuscleGroup(ctx context.Context, name string) (MuscleGroup, error)
+	ListCompletedWorkoutsInRange(ctx context.Context, arg ListCompletedWorkoutsInRangeParams) ([]Workout, error)
+	ListExerciseProgress(ctx context.Context, arg ListExerciseProgressParams) ([]ListExerciseProgressRow, error)
 	ListExercisesByMuscleGroup(ctx context.Context, muscleGroupID int32) ([]Exercise, error)
+	ListMuscleGroupProgress(ctx context.Context, arg ListMuscleGroupProgressParams) ([]ListMuscleGroupProgressRow, error)
 	ListMuscleGroups(ctx context.Context) ([]MuscleGroup, error)
-	ListWorkoutExercisesForWorkout(ctx context.Context, workoutID int32) ([]WorkoutExercise, error)
+	ListUsersDueWeeklyBackup(ctx context.Context, lastBackupAt pgtype.Timestamptz) ([]int64, error)
+	ListWorkoutSummaries(ctx context.Context, arg ListWorkoutSummariesParams) ([]ListWorkoutSummariesRow, error)
+	SetLastBackupAt(ctx context.Context, arg SetLastBackupAtParams) error
+	UpsertUserSettings(ctx context.Context, arg UpsertUserSettingsParams) error
 	UpsertUserWorkoutState(ctx context.Context, arg UpsertUserWorkoutStateParams) error
 	UpsertWorkoutExercise(ctx context.Context, arg UpsertWorkoutExerciseParams) (WorkoutExercise, error)
+	WorkoutExerciseExistsOnDate(ctx context.Context, arg WorkoutExerciseExistsOnDateParams) (bool, error)
 }
 
 var _ Querier = (*Queries)(nil)

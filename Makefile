@@ -1,4 +1,4 @@
-.PHONY: dev docker-up docker-down migrate-up migrate-down sqlc run test build tidy
+.PHONY: dev docker-up docker-down migrate-up migrate-down sqlc run test test-integration webapp-preview build tidy
 
 DATABASE_URL ?= postgres://fitness:fitness@localhost:5432/fitness?sslmode=disable
 
@@ -26,6 +26,15 @@ run:
 
 test:
 	go test ./...
+
+# Тесты репозиториев на настоящем Postgres (во временной схеме, данные не трогает)
+test-integration:
+	TEST_DATABASE_URL=$(DATABASE_URL) go test -count=1 ./internal/repository/postgres/
+
+# Mini App в браузере без бота и базы: данные из export.json, в памяти (ничего не сохраняется)
+webapp-preview:
+	@echo "Откройте http://127.0.0.1:8099/  (остановить: Ctrl+C)"
+	@WEBAPP_PREVIEW=127.0.0.1:8099 CHART_EXPORT=$(CURDIR)/export.json go test ./internal/webapp -run TestPreview -timeout 0 -count=1
 
 build:
 	go build -o bin/bot ./cmd/bot

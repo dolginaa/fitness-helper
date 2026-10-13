@@ -71,6 +71,13 @@ func (w *Workout) CompleteWorkout(ctx context.Context, userID int64, workoutID i
 	return mapErr(err)
 }
 
+func (w *Workout) DeleteWorkout(ctx context.Context, userID int64, workoutID int) error {
+	return w.q.DeleteWorkout(ctx, sqlcgen.DeleteWorkoutParams{
+		ID:     int32(workoutID),
+		UserID: userID,
+	})
+}
+
 func (w *Workout) UpsertWorkoutExercise(ctx context.Context, userID int64, workoutID int, exerciseID int, sets []domain.SetEntry) error {
 	if err := w.ensureWorkoutOwner(ctx, workoutID, userID); err != nil {
 		return err
@@ -79,21 +86,22 @@ func (w *Workout) UpsertWorkoutExercise(ctx context.Context, userID int64, worko
 	if err != nil {
 		return err
 	}
-	tx, err := w.pool.Begin(ctx)
-	if err != nil {
-		return err
-	}
-	defer func() { _ = tx.Rollback(ctx) }()
-	qtx := w.q.WithTx(tx)
-	_, err = qtx.UpsertWorkoutExercise(ctx, sqlcgen.UpsertWorkoutExerciseParams{
+	_, err = w.q.UpsertWorkoutExercise(ctx, sqlcgen.UpsertWorkoutExerciseParams{
 		WorkoutID:  int32(workoutID),
 		ExerciseID: int32(exerciseID),
 		Sets:       b,
 	})
-	if err != nil {
+	return err
+}
+
+func (w *Workout) DeleteWorkoutExercise(ctx context.Context, userID int64, workoutID int, exerciseID int) error {
+	if err := w.ensureWorkoutOwner(ctx, workoutID, userID); err != nil {
 		return err
 	}
-	return tx.Commit(ctx)
+	return w.q.DeleteWorkoutExercise(ctx, sqlcgen.DeleteWorkoutExerciseParams{
+		WorkoutID:  int32(workoutID),
+		ExerciseID: int32(exerciseID),
+	})
 }
 
 func (w *Workout) ensureWorkoutOwner(ctx context.Context, workoutID int, userID int64) error {
@@ -126,21 +134,6 @@ func (w *Workout) GetLastExerciseData(ctx context.Context, userID int64, exercis
 	return sets, at, nil
 }
 
-func (w *Workout) ListCompletedWorkouts(ctx context.Context, userID int64, limit int) ([]domain.Workout, error) {
-	rows, err := w.q.ListCompletedWorkoutsForUser(ctx, sqlcgen.ListCompletedWorkoutsForUserParams{
-		UserID: userID,
-		Limit:  int32(limit),
-	})
-	if err != nil {
-		return nil, err
-	}
-	out := make([]domain.Workout, 0, len(rows))
-	for _, r := range rows {
-		out = append(out, mapWorkout(r))
-	}
-	return out, nil
-}
-
 func mapWorkout(w sqlcgen.Workout) domain.Workout {
 	var t time.Time
 	if w.Date.Valid {
@@ -164,3 +157,5 @@ func parseSets(b []byte) ([]domain.SetEntry, error) {
 	}
 	return s, nil
 }
+
+var _ domain.WorkoutRepository = (*Workout)(nil)

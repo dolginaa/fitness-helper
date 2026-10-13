@@ -2,6 +2,7 @@ package postgres
 
 import (
 	"context"
+	"errors"
 
 	"github.com/adolgina/fitness-helper/internal/domain"
 	"github.com/adolgina/fitness-helper/internal/repository/sqlcgen"
@@ -27,6 +28,14 @@ func (c *Catalog) ListMuscleGroups(ctx context.Context) ([]domain.MuscleGroup, e
 	return out, nil
 }
 
+func (c *Catalog) GetMuscleGroup(ctx context.Context, id int) (domain.MuscleGroup, error) {
+	r, err := c.q.GetMuscleGroupByID(ctx, int32(id))
+	if err != nil {
+		return domain.MuscleGroup{}, mapErr(err)
+	}
+	return domain.MuscleGroup{ID: int(r.ID), Name: r.Name}, nil
+}
+
 func (c *Catalog) ListExercisesByGroup(ctx context.Context, muscleGroupID int) ([]domain.Exercise, error) {
 	rows, err := c.q.ListExercisesByMuscleGroup(ctx, int32(muscleGroupID))
 	if err != nil {
@@ -34,11 +43,7 @@ func (c *Catalog) ListExercisesByGroup(ctx context.Context, muscleGroupID int) (
 	}
 	out := make([]domain.Exercise, 0, len(rows))
 	for _, r := range rows {
-		out = append(out, domain.Exercise{
-			ID:            int(r.ID),
-			Name:          r.Name,
-			MuscleGroupID: int(r.MuscleGroupID),
-		})
+		out = append(out, mapExercise(r))
 	}
 	return out, nil
 }
@@ -48,24 +53,50 @@ func (c *Catalog) GetExercise(ctx context.Context, id int) (domain.Exercise, err
 	if err != nil {
 		return domain.Exercise{}, mapErr(err)
 	}
-	return domain.Exercise{
-		ID:            int(r.ID),
-		Name:          r.Name,
-		MuscleGroupID: int(r.MuscleGroupID),
-	}, nil
+	return mapExercise(r), nil
 }
 
-func (c *Catalog) GetExerciseInGroup(ctx context.Context, exerciseID, muscleGroupID int) (domain.Exercise, error) {
-	r, err := c.q.GetExerciseByIDAndGroup(ctx, sqlcgen.GetExerciseByIDAndGroupParams{
-		ID:            int32(exerciseID),
+func (c *Catalog) CreateExercise(ctx context.Context, name string, muscleGroupID int) (domain.Exercise, error) {
+	r, err := c.q.InsertExercise(ctx, sqlcgen.InsertExerciseParams{
+		Name:          name,
 		MuscleGroupID: int32(muscleGroupID),
 	})
 	if err != nil {
-		return domain.Exercise{}, mapErr(err)
+		return domain.Exercise{}, err
 	}
-	return domain.Exercise{
-		ID:            int(r.ID),
-		Name:          r.Name,
-		MuscleGroupID: int(r.MuscleGroupID),
-	}, nil
+	return mapExercise(r), nil
 }
+
+func (c *Catalog) GetOrCreateExerciseByNameAndGroup(ctx context.Context, name, muscleGroup string) (domain.Exercise, error) {
+	r, err := c.q.GetExerciseByNameAndGroup(ctx, sqlcgen.GetExerciseByNameAndGroupParams{
+		Name:   name,
+		Name_2: muscleGroup,
+	})
+	if err == nil {
+		return mapExercise(r), nil
+	}
+	if err := mapErr(err); !errors.Is(err, domain.ErrNotFound) {
+		return domain.Exercise{}, err
+	}
+	mg, err := c.q.GetMuscleGroupByName(ctx, muscleGroup)
+	if err != nil {
+		if err := mapErr(err); !errors.Is(err, domain.ErrNotFound) {
+			return domain.Exercise{}, err
+		}
+		mg, err = c.q.InsertMuscleGroup(ctx, muscleGroup)
+		if err != nil {
+			return domain.Exercise{}, err
+		}
+	}
+	return c.CreateExercise(ctx, name, int(mg.ID))
+}
+
+func mapExercise(e sqlcgen.Exercise) domain.Exercise {
+	return domain.Exercise{
+		ID:            int(e.ID),
+		Name:          e.Name,
+		MuscleGroupID: int(e.MuscleGroupID),
+	}
+}
+
+var _ domain.CatalogRepository = (*Catalog)(nil)

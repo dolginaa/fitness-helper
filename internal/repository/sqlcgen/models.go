@@ -19,6 +19,12 @@ type MuscleGroup struct {
 	Name string `json:"name"`
 }
 
+type UserSetting struct {
+	UserID              int64              `json:"user_id"`
+	WeeklyBackupEnabled bool               `json:"weekly_backup_enabled"`
+	LastBackupAt        pgtype.Timestamptz `json:"last_backup_at"`
+}
+
 type UserWorkoutState struct {
 	UserID          int64              `json:"user_id"`
 	ActiveWorkoutID pgtype.Int4        `json:"active_workout_id"`

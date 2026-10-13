@@ -20,19 +20,71 @@ func (q *Queries) GetExerciseByID(ctx context.Context, id int32) (Exercise, erro
 	return i, err
 }
 
-const getExerciseByIDAndGroup = `-- name: GetExerciseByIDAndGroup :one
-SELECT id, name, muscle_group_id FROM exercises WHERE id = $1 AND muscle_group_id = $2
+const getExerciseByNameAndGroup = `-- name: GetExerciseByNameAndGroup :one
+SELECT e.id, e.name, e.muscle_group_id
+FROM exercises e
+JOIN muscle_groups mg ON mg.id = e.muscle_group_id
+WHERE e.name = $1 AND mg.name = $2
 `
 
-type GetExerciseByIDAndGroupParams struct {
-	ID            int32 `json:"id"`
-	MuscleGroupID int32 `json:"muscle_group_id"`
+type GetExerciseByNameAndGroupParams struct {
+	Name   string `json:"name"`
+	Name_2 string `json:"name_2"`
 }
 
-func (q *Queries) GetExerciseByIDAndGroup(ctx context.Context, arg GetExerciseByIDAndGroupParams) (Exercise, error) {
-	row := q.db.QueryRow(ctx, getExerciseByIDAndGroup, arg.ID, arg.MuscleGroupID)
+func (q *Queries) GetExerciseByNameAndGroup(ctx context.Context, arg GetExerciseByNameAndGroupParams) (Exercise, error) {
+	row := q.db.QueryRow(ctx, getExerciseByNameAndGroup, arg.Name, arg.Name_2)
 	var i Exercise
 	err := row.Scan(&i.ID, &i.Name, &i.MuscleGroupID)
+	return i, err
+}
+
+const getMuscleGroupByID = `-- name: GetMuscleGroupByID :one
+SELECT id, name FROM muscle_groups WHERE id = $1
+`
+
+func (q *Queries) GetMuscleGroupByID(ctx context.Context, id int32) (MuscleGroup, error) {
+	row := q.db.QueryRow(ctx, getMuscleGroupByID, id)
+	var i MuscleGroup
+	err := row.Scan(&i.ID, &i.Name)
+	return i, err
+}
+
+const getMuscleGroupByName = `-- name: GetMuscleGroupByName :one
+SELECT id, name FROM muscle_groups WHERE name = $1
+`
+
+func (q *Queries) GetMuscleGroupByName(ctx context.Context, name string) (MuscleGroup, error) {
+	row := q.db.QueryRow(ctx, getMuscleGroupByName, name)
+	var i MuscleGroup
+	err := row.Scan(&i.ID, &i.Name)
+	return i, err
+}
+
+const insertExercise = `-- name: InsertExercise :one
+INSERT INTO exercises (name, muscle_group_id) VALUES ($1, $2) RETURNING id, name, muscle_group_id
+`
+
+type InsertExerciseParams struct {
+	Name          string `json:"name"`
+	MuscleGroupID int32  `json:"muscle_group_id"`
+}
+
+func (q *Queries) InsertExercise(ctx context.Context, arg InsertExerciseParams) (Exercise, error) {
+	row := q.db.QueryRow(ctx, insertExercise, arg.Name, arg.MuscleGroupID)
+	var i Exercise
+	err := row.Scan(&i.ID, &i.Name, &i.MuscleGroupID)
+	return i, err
+}
+
+const insertMuscleGroup = `-- name: InsertMuscleGroup :one
+INSERT INTO muscle_groups (name) VALUES ($1) RETURNING id, name
+`
+
+func (q *Queries) InsertMuscleGroup(ctx context.Context, name string) (MuscleGroup, error) {
+	row := q.db.QueryRow(ctx, insertMuscleGroup, name)
+	var i MuscleGroup
+	err := row.Scan(&i.ID, &i.Name)
 	return i, err
 }
 

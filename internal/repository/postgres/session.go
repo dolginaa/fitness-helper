@@ -63,3 +63,5 @@ func (s *Session) Save(ctx context.Context, userID int64, activeWorkoutID *int, 
 func (s *Session) Clear(ctx context.Context, userID int64) error {
 	return s.q.ClearUserWorkoutState(ctx, userID)
 }
+
+var _ domain.SessionRepository = (*Session)(nil)
