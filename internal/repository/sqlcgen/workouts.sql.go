@@ -37,21 +37,33 @@ func (q *Queries) CompleteAllActiveWorkoutsForUser(ctx context.Context, userID i
 }
 
 const completeWorkout = `-- name: CompleteWorkout :exec
-UPDATE workouts SET status = 'completed' WHERE id = $1 AND user_id = $2
+UPDATE workouts SET status = 'completed', finished_at = $3 WHERE id = $1 AND user_id = $2
 `
 
 type CompleteWorkoutParams struct {
-	ID     int32 `json:"id"`
-	UserID int64 `json:"user_id"`
+	ID         int32              `json:"id"`
+	UserID     int64              `json:"user_id"`
+	FinishedAt pgtype.Timestamptz `json:"finished_at"`
 }
 
 func (q *Queries) CompleteWorkout(ctx context.Context, arg CompleteWorkoutParams) error {
-	_, err := q.db.Exec(ctx, completeWorkout, arg.ID, arg.UserID)
+	_, err := q.db.Exec(ctx, completeWorkout, arg.ID, arg.UserID, arg.FinishedAt)
 	return err
 }
 
+const countWorkoutExercisesOfExercise = `-- name: CountWorkoutExercisesOfExercise :one
+SELECT COUNT(*)::int FROM workout_exercises WHERE exercise_id = $1
+`
+
+func (q *Queries) CountWorkoutExercisesOfExercise(ctx context.Context, exerciseID int32) (int32, error) {
+	row := q.db.QueryRow(ctx, countWorkoutExercisesOfExercise, exerciseID)
+	var column_1 int32
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
 const createWorkout = `-- name: CreateWorkout :one
-INSERT INTO workouts (user_id, status) VALUES ($1, 'active') RETURNING id, user_id, date, status
+INSERT INTO workouts (user_id, status) VALUES ($1, 'active') RETURNING id, user_id, date, status, finished_at
 `
 
 func (q *Queries) CreateWorkout(ctx context.Context, userID int64) (Workout, error) {
@@ -62,6 +74,7 @@ func (q *Queries) CreateWorkout(ctx context.Context, userID int64) (Workout, err
 		&i.UserID,
 		&i.Date,
 		&i.Status,
+		&i.FinishedAt,
 	)
 	return i, err
 }
@@ -94,8 +107,17 @@ func (q *Queries) DeleteWorkoutExercise(ctx context.Context, arg DeleteWorkoutEx
 	return err
 }
 
+const deleteWorkoutExerciseByID = `-- name: DeleteWorkoutExerciseByID :exec
+DELETE FROM workout_exercises WHERE id = $1
+`
+
+func (q *Queries) DeleteWorkoutExerciseByID(ctx context.Context, id int32) error {
+	_, err := q.db.Exec(ctx, deleteWorkoutExerciseByID, id)
+	return err
+}
+
 const getActiveWorkoutForUser = `-- name: GetActiveWorkoutForUser :one
-SELECT id, user_id, date, status FROM workouts WHERE user_id = $1 AND status = 'active' LIMIT 1
+SELECT id, user_id, date, status, finished_at FROM workouts WHERE user_id = $1 AND status = 'active' LIMIT 1
 `
 
 func (q *Queries) GetActiveWorkoutForUser(ctx context.Context, userID int64) (Workout, error) {
@@ -106,6 +128,7 @@ func (q *Queries) GetActiveWorkoutForUser(ctx context.Context, userID int64) (Wo
 		&i.UserID,
 		&i.Date,
 		&i.Status,
+		&i.FinishedAt,
 	)
 	return i, err
 }
@@ -137,7 +160,7 @@ func (q *Queries) GetLastWorkoutExerciseData(ctx context.Context, arg GetLastWor
 }
 
 const getWorkoutByIDForUser = `-- name: GetWorkoutByIDForUser :one
-SELECT id, user_id, date, status FROM workouts WHERE id = $1 AND user_id = $2
+SELECT id, user_id, date, status, finished_at FROM workouts WHERE id = $1 AND user_id = $2
 `
 
 type GetWorkoutByIDForUserParams struct {
@@ -153,8 +176,87 @@ func (q *Queries) GetWorkoutByIDForUser(ctx context.Context, arg GetWorkoutByIDF
 		&i.UserID,
 		&i.Date,
 		&i.Status,
+		&i.FinishedAt,
 	)
 	return i, err
+}
+
+const getWorkoutExerciseOfWorkout = `-- name: GetWorkoutExerciseOfWorkout :one
+SELECT id, workout_id, exercise_id, sets FROM workout_exercises WHERE workout_id = $1 AND exercise_id = $2 FOR UPDATE
+`
+
+type GetWorkoutExerciseOfWorkoutParams struct {
+	WorkoutID  int32 `json:"workout_id"`
+	ExerciseID int32 `json:"exercise_id"`
+}
+
+func (q *Queries) GetWorkoutExerciseOfWorkout(ctx context.Context, arg GetWorkoutExerciseOfWorkoutParams) (WorkoutExercise, error) {
+	row := q.db.QueryRow(ctx, getWorkoutExerciseOfWorkout, arg.WorkoutID, arg.ExerciseID)
+	var i WorkoutExercise
+	err := row.Scan(
+		&i.ID,
+		&i.WorkoutID,
+		&i.ExerciseID,
+		&i.Sets,
+	)
+	return i, err
+}
+
+const listWorkoutExercisesOfExercise = `-- name: ListWorkoutExercisesOfExercise :many
+SELECT id, workout_id, exercise_id, sets FROM workout_exercises WHERE exercise_id = $1 ORDER BY workout_id FOR UPDATE
+`
+
+func (q *Queries) ListWorkoutExercisesOfExercise(ctx context.Context, exerciseID int32) ([]WorkoutExercise, error) {
+	rows, err := q.db.Query(ctx, listWorkoutExercisesOfExercise, exerciseID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []WorkoutExercise{}
+	for rows.Next() {
+		var i WorkoutExercise
+		if err := rows.Scan(
+			&i.ID,
+			&i.WorkoutID,
+			&i.ExerciseID,
+			&i.Sets,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const moveWorkoutExercise = `-- name: MoveWorkoutExercise :exec
+UPDATE workout_exercises SET exercise_id = $2 WHERE id = $1
+`
+
+type MoveWorkoutExerciseParams struct {
+	ID         int32 `json:"id"`
+	ExerciseID int32 `json:"exercise_id"`
+}
+
+func (q *Queries) MoveWorkoutExercise(ctx context.Context, arg MoveWorkoutExerciseParams) error {
+	_, err := q.db.Exec(ctx, moveWorkoutExercise, arg.ID, arg.ExerciseID)
+	return err
+}
+
+const updateWorkoutExerciseSets = `-- name: UpdateWorkoutExerciseSets :exec
+UPDATE workout_exercises SET sets = $2 WHERE id = $1
+`
+
+type UpdateWorkoutExerciseSetsParams struct {
+	ID   int32  `json:"id"`
+	Sets []byte `json:"sets"`
+}
+
+func (q *Queries) UpdateWorkoutExerciseSets(ctx context.Context, arg UpdateWorkoutExerciseSetsParams) error {
+	_, err := q.db.Exec(ctx, updateWorkoutExerciseSets, arg.ID, arg.Sets)
+	return err
 }
 
 const upsertWorkoutExercise = `-- name: UpsertWorkoutExercise :one

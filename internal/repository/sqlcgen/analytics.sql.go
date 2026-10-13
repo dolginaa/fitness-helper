@@ -81,6 +81,7 @@ SELECT
     w.user_id,
     w.date,
     w.status,
+    w.finished_at,
     we.exercise_id,
     e.name AS exercise_name,
     mg.name AS muscle_group_name,
@@ -103,6 +104,7 @@ type GetWorkoutDetailRowsRow struct {
 	UserID          int64              `json:"user_id"`
 	Date            pgtype.Timestamptz `json:"date"`
 	Status          string             `json:"status"`
+	FinishedAt      pgtype.Timestamptz `json:"finished_at"`
 	ExerciseID      pgtype.Int4        `json:"exercise_id"`
 	ExerciseName    pgtype.Text        `json:"exercise_name"`
 	MuscleGroupName pgtype.Text        `json:"muscle_group_name"`
@@ -123,6 +125,7 @@ func (q *Queries) GetWorkoutDetailRows(ctx context.Context, arg GetWorkoutDetail
 			&i.UserID,
 			&i.Date,
 			&i.Status,
+			&i.FinishedAt,
 			&i.ExerciseID,
 			&i.ExerciseName,
 			&i.MuscleGroupName,
@@ -149,9 +152,16 @@ type InsertImportedWorkoutParams struct {
 	Date   pgtype.Timestamptz `json:"date"`
 }
 
-func (q *Queries) InsertImportedWorkout(ctx context.Context, arg InsertImportedWorkoutParams) (Workout, error) {
+type InsertImportedWorkoutRow struct {
+	ID     int32              `json:"id"`
+	UserID int64              `json:"user_id"`
+	Date   pgtype.Timestamptz `json:"date"`
+	Status string             `json:"status"`
+}
+
+func (q *Queries) InsertImportedWorkout(ctx context.Context, arg InsertImportedWorkoutParams) (InsertImportedWorkoutRow, error) {
 	row := q.db.QueryRow(ctx, insertImportedWorkout, arg.UserID, arg.Date)
-	var i Workout
+	var i InsertImportedWorkoutRow
 	err := row.Scan(
 		&i.ID,
 		&i.UserID,
@@ -162,7 +172,7 @@ func (q *Queries) InsertImportedWorkout(ctx context.Context, arg InsertImportedW
 }
 
 const listCompletedWorkoutsInRange = `-- name: ListCompletedWorkoutsInRange :many
-SELECT id, user_id, date, status
+SELECT id, user_id, date, status, finished_at
 FROM workouts
 WHERE user_id = $1 AND status = 'completed' AND date >= $2 AND date < $3
 ORDER BY date DESC
@@ -188,6 +198,7 @@ func (q *Queries) ListCompletedWorkoutsInRange(ctx context.Context, arg ListComp
 			&i.UserID,
 			&i.Date,
 			&i.Status,
+			&i.FinishedAt,
 		); err != nil {
 			return nil, err
 		}
@@ -200,7 +211,7 @@ func (q *Queries) ListCompletedWorkoutsInRange(ctx context.Context, arg ListComp
 }
 
 const listExerciseProgress = `-- name: ListExerciseProgress :many
-SELECT w.date, we.sets
+SELECT w.id AS workout_id, w.date, we.sets
 FROM workout_exercises we
 JOIN workouts w ON w.id = we.workout_id
 WHERE w.user_id = $1 AND w.status = 'completed' AND we.exercise_id = $2 AND w.date >= $3
@@ -214,8 +225,9 @@ type ListExerciseProgressParams struct {
 }
 
 type ListExerciseProgressRow struct {
-	Date pgtype.Timestamptz `json:"date"`
-	Sets []byte             `json:"sets"`
+	WorkoutID int32              `json:"workout_id"`
+	Date      pgtype.Timestamptz `json:"date"`
+	Sets      []byte             `json:"sets"`
 }
 
 func (q *Queries) ListExerciseProgress(ctx context.Context, arg ListExerciseProgressParams) ([]ListExerciseProgressRow, error) {
@@ -227,7 +239,7 @@ func (q *Queries) ListExerciseProgress(ctx context.Context, arg ListExerciseProg
 	items := []ListExerciseProgressRow{}
 	for rows.Next() {
 		var i ListExerciseProgressRow
-		if err := rows.Scan(&i.Date, &i.Sets); err != nil {
+		if err := rows.Scan(&i.WorkoutID, &i.Date, &i.Sets); err != nil {
 			return nil, err
 		}
 		items = append(items, i)
@@ -239,7 +251,7 @@ func (q *Queries) ListExerciseProgress(ctx context.Context, arg ListExerciseProg
 }
 
 const listMuscleGroupProgress = `-- name: ListMuscleGroupProgress :many
-SELECT w.date, e.id AS exercise_id, e.name AS exercise_name, we.sets
+SELECT w.id AS workout_id, w.date, e.id AS exercise_id, e.name AS exercise_name, we.sets
 FROM workout_exercises we
 JOIN workouts w ON w.id = we.workout_id
 JOIN exercises e ON e.id = we.exercise_id
@@ -254,6 +266,7 @@ type ListMuscleGroupProgressParams struct {
 }
 
 type ListMuscleGroupProgressRow struct {
+	WorkoutID    int32              `json:"workout_id"`
 	Date         pgtype.Timestamptz `json:"date"`
 	ExerciseID   int32              `json:"exercise_id"`
 	ExerciseName string             `json:"exercise_name"`
@@ -270,6 +283,7 @@ func (q *Queries) ListMuscleGroupProgress(ctx context.Context, arg ListMuscleGro
 	for rows.Next() {
 		var i ListMuscleGroupProgressRow
 		if err := rows.Scan(
+			&i.WorkoutID,
 			&i.Date,
 			&i.ExerciseID,
 			&i.ExerciseName,
@@ -291,6 +305,7 @@ SELECT
     w.user_id,
     w.date,
     w.status,
+    w.finished_at,
     COUNT(we.id)::int AS exercise_count,
     COALESCE(array_agg(DISTINCT mg.name) FILTER (WHERE mg.name IS NOT NULL), '{}')::text[] AS muscle_groups
 FROM workouts w
@@ -314,6 +329,7 @@ type ListWorkoutSummariesRow struct {
 	UserID        int64              `json:"user_id"`
 	Date          pgtype.Timestamptz `json:"date"`
 	Status        string             `json:"status"`
+	FinishedAt    pgtype.Timestamptz `json:"finished_at"`
 	ExerciseCount int32              `json:"exercise_count"`
 	MuscleGroups  []string           `json:"muscle_groups"`
 }
@@ -332,6 +348,7 @@ func (q *Queries) ListWorkoutSummaries(ctx context.Context, arg ListWorkoutSumma
 			&i.UserID,
 			&i.Date,
 			&i.Status,
+			&i.FinishedAt,
 			&i.ExerciseCount,
 			&i.MuscleGroups,
 		); err != nil {

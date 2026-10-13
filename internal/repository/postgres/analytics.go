@@ -44,12 +44,9 @@ func (a *Analytics) ListWorkoutSummaries(ctx context.Context, userID int64, limi
 	out := make([]domain.WorkoutSummary, 0, len(rows))
 	for _, r := range rows {
 		out = append(out, domain.WorkoutSummary{
-			Workout: domain.Workout{
-				ID:     int(r.ID),
-				UserID: r.UserID,
-				Date:   timeFromPg(r.Date),
-				Status: domain.WorkoutStatus(r.Status),
-			},
+			Workout: mapWorkout(sqlcgen.Workout{
+				ID: r.ID, UserID: r.UserID, Date: r.Date, Status: r.Status, FinishedAt: r.FinishedAt,
+			}),
 			MuscleGroups:  r.MuscleGroups,
 			ExerciseCount: int(r.ExerciseCount),
 		})
@@ -74,12 +71,9 @@ func (a *Analytics) GetWorkoutDetail(ctx context.Context, userID int64, workoutI
 func buildWorkoutDetail(rows []sqlcgen.GetWorkoutDetailRowsRow) domain.WorkoutDetail {
 	r0 := rows[0]
 	detail := domain.WorkoutDetail{
-		Workout: domain.Workout{
-			ID:     int(r0.WorkoutID),
-			UserID: r0.UserID,
-			Date:   timeFromPg(r0.Date),
-			Status: domain.WorkoutStatus(r0.Status),
-		},
+		Workout: mapWorkout(sqlcgen.Workout{
+			ID: r0.WorkoutID, UserID: r0.UserID, Date: r0.Date, Status: r0.Status, FinishedAt: r0.FinishedAt,
+		}),
 	}
 	for _, r := range rows {
 		if !r.ExerciseID.Valid {
@@ -111,12 +105,7 @@ func (a *Analytics) ListExerciseProgress(ctx context.Context, userID int64, exer
 		if err != nil {
 			return nil, err
 		}
-		points = append(points, domain.ExerciseProgressPoint{
-			Date:          timeFromPg(r.Date),
-			MaxWeight:     domain.MaxWeightFromSets(sets),
-			WorkingWeight: domain.WorkingWeightFromSets(sets),
-			Sets:          sets,
-		})
+		points = append(points, domain.NewProgressPoint(int(r.WorkoutID), timeFromPg(r.Date), sets))
 	}
 	return points, nil
 }
@@ -145,12 +134,7 @@ func (a *Analytics) ListMuscleGroupProgress(ctx context.Context, userID int64, m
 			}
 			order = append(order, exID)
 		}
-		byEx[exID].Points = append(byEx[exID].Points, domain.ExerciseProgressPoint{
-			Date:          timeFromPg(r.Date),
-			MaxWeight:     domain.MaxWeightFromSets(sets),
-			WorkingWeight: domain.WorkingWeightFromSets(sets),
-			Sets:          sets,
-		})
+		byEx[exID].Points = append(byEx[exID].Points, domain.NewProgressPoint(int(r.WorkoutID), timeFromPg(r.Date), sets))
 	}
 	out := make([]domain.ExerciseProgressSeries, 0, len(order))
 	for _, id := range order {

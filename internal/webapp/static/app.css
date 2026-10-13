@@ -207,3 +207,24 @@ button.row:active { background: var(--wash); }
   color: var(--bg);
   font-size: 15px;
 }
+
+/* The switch between kinds of load. */
+.pills { display: flex; gap: 8px; flex-wrap: wrap; margin: 0 0 4px; }
+.pill {
+  min-height: 40px;
+  padding: 0 16px;
+  border: 0;
+  border-radius: 20px;
+  background: var(--wash);
+  color: var(--accent);
+  font: inherit;
+  font-weight: 600;
+}
+.pill.on { background: var(--accent); color: var(--accent-text); }
+
+.checks { margin: 12px 0 0; }
+.row.check { cursor: pointer; }
+.row.check input { width: 22px; height: 22px; accent-color: var(--accent); flex: none; }
+form .checks + .btn { margin-top: 12px; }
+
+.stats .stat { min-width: 64px; }

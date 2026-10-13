@@ -137,12 +137,11 @@ type harness struct {
 
 func newHarness(t *testing.T) *harness {
 	t.Helper()
-	ctx := context.Background()
 	store := memory.NewStore()
 	legs := store.AddGroup("ноги")
 	store.AddGroup("спина")
-	press, _ := store.CreateExercise(ctx, "Жим ногами", legs.ID)
-	calf, _ := store.CreateExercise(ctx, "Икры", legs.ID)
+	press := store.AddExercise(legs.ID, "Жим ногами")
+	calf := store.AddExercise(legs.ID, "Икры")
 	api := &fakeMessenger{}
 	return &harness{
 		t:     t,
@@ -478,4 +477,101 @@ func TestImportDialog(t *testing.T) {
 	mustContain(t, s, "будут <b>удалены</b>", "[♻️ Да, заменить]")
 	s = h.tap(s.data(t, "Да, заменить"))
 	mustContain(t, s, "Импорт завершён", "Добавлено тренировок: 1")
+}
+
+func TestBandAndBodyweightDialog(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t)
+	pull := h.store.AddExercise(h.legs.ID, "Подтягивания", domain.LoadWeight, domain.LoadBand, domain.LoadBodyweight)
+
+	h.command("/startnew")
+	h.tap(fmt.Sprintf("%s:%d", keyboards.CallbackMuscleGroup, h.legs.ID))
+	s := h.tap(fmt.Sprintf("%s:%d", keyboards.CallbackExercise, pull.ID))
+	mustContain(t, s, "<b>Подтягивания</b> · вес", "<code>10 50</code>", "[● Вес]", "[Резинка]", "[Свой вес]", "[⚙️ Нагрузка]")
+
+	s = h.tap(s.data(t, "Резинка"))
+	mustContain(t, s, "· резинка", "повторы и уровень резинки", "<code>12 4</code>", "[● Резинка]")
+	s = h.text("12")
+	mustContain(t, s, "Повторов: <b>12</b>", "уровень резинки (1–10)")
+	s = h.text("4")
+	mustContain(t, s, "1) 12 × резинка 4", "[➕ Ещё 12×рез.4]")
+	s = h.text("10 3")
+	mustContain(t, s, "2) 10 × резинка 3")
+	hint := h.text("10 15")
+	mustContain(t, hint, "Не понял подход", "уровень резинки от 1 до 10")
+
+	s = h.tap(s.data(t, "Свой вес"))
+	mustContain(t, s, "· свой вес", "повторы:", "<code>15</code>", "[● Свой вес]")
+	s = h.text("15, 12")
+	mustContain(t, s, "3) 15 × свой вес", "4) 12 × свой вес")
+	s = h.text("8 5")
+	mustContain(t, s, "5) 8 × свой вес +5 кг")
+
+	// The kinds of load of the exercise are set on their own screen.
+	s = h.tap(s.data(t, "Нагрузка"))
+	mustContain(t, s, "С чем вы делаете это упражнение", "[✅ Вес]", "[✅ Свой вес]", "[✅ Резинка]")
+	s = h.tap(s.data(t, "Свой вес"))
+	mustContain(t, s, "[⬜ Свой вес]", "[✅ Резинка]")
+	s = h.tap(s.data(t, "Готово"))
+	mustContain(t, s, "<b>Подтягивания</b> · вес", "[● Вес]", "[Резинка]")
+	if strings.Contains(s.String(), "[Свой вес]") {
+		t.Fatalf("a kind that was taken away must not be offered:\n%s", s)
+	}
+
+	s = h.tap(keyboards.CallbackEndWorkout)
+	mustContain(t, s, "Завершить тренировку?", "Подтягивания — 12×рез.4, 10×рез.3, 15×св.вес, 12×св.вес, 8×св.вес+5")
+	s = h.tap(s.data(t, "Завершить"))
+	mustContain(t, s, "Тренировка завершена", "🆕 Впервые: Подтягивания", "подходов: 5")
+	if strings.Contains(s.text, "тоннаж") && !strings.Contains(s.text, "тоннаж: 40 кг") {
+		t.Fatalf("only the extra weight counts as lifted:\n%s", s)
+	}
+}
+
+func TestLastKindOfExerciseCannotBeRemoved(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t)
+	h.command("/startnew")
+	h.tap(fmt.Sprintf("%s:%d", keyboards.CallbackMuscleGroup, h.legs.ID))
+	s := h.tap(fmt.Sprintf("%s:%d", keyboards.CallbackExercise, h.press.ID))
+	if strings.Contains(s.String(), "[● Вес]") {
+		t.Fatalf("an exercise with one kind needs no switch:\n%s", s)
+	}
+	s = h.tap(s.data(t, "Нагрузка"))
+	mustContain(t, s, "[✅ Вес]", "[⬜ Свой вес]", "[⬜ Резинка]")
+	s = h.tap(s.data(t, "Вес"))
+	mustContain(t, s, "[✅ Вес]")
+}
+
+func TestFinishReportScreen(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t)
+	start := time.Now().Add(-40 * time.Minute)
+	h.store.AddCompletedWorkout(testUser, start.AddDate(0, 0, -3), h.press.ID, domain.SetEntry{Reps: 10, Weight: 100}, domain.SetEntry{Reps: 8, Weight: 100})
+	h.store.AddCompletedWorkout(testUser, start.AddDate(0, 0, -3), h.calf.ID, domain.SetEntry{Reps: 20, Weight: 40})
+	h.store.Now = func() time.Time { return start }
+
+	h.command("/startnew")
+	h.tap(fmt.Sprintf("%s:%d", keyboards.CallbackMuscleGroup, h.legs.ID))
+	h.tap(fmt.Sprintf("%s:%d", keyboards.CallbackExercise, h.press.ID))
+	h.text("10 105, 8 105")
+	h.tap(keyboards.CallbackExercises)
+	h.tap(fmt.Sprintf("%s:%d", keyboards.CallbackExercise, h.calf.ID))
+	h.text("20 40")
+
+	s := h.tap(keyboards.CallbackEndWorkoutForce)
+	mustContain(t, s,
+		"Тренировка завершена",
+		"⏱ 40 мин",
+		"ноги",
+		"Упражнений: 2 · подходов: 3 · повторов: 38 · тоннаж: 2 690 кг (+",
+		"🏆 <b>Рекорды</b>",
+		"Жим ногами — вес 105 кг (было 100)",
+		"📈 <b>Против прошлого раза</b>",
+		"Жим ногами: 100 → 105 кг, объём +",
+		"прошлая — 3 дн. назад",
+		"[📅 История]",
+	)
+	if strings.Contains(s.text, "Икры:") {
+		t.Fatalf("an exercise that did not change is not in the comparison:\n%s", s)
+	}
 }

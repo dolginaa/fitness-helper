@@ -16,6 +16,8 @@ type SessionState struct {
 	Phase         Phase `json:"phase"`
 	MuscleGroupID int   `json:"muscle_group_id,omitempty"`
 	ExerciseID    int   `json:"exercise_id,omitempty"`
+	// Kind is the load kind the next set of the exercise is entered in.
+	Kind LoadKind `json:"kind,omitempty"`
 	// PendingReps > 0 means reps were sent on their own and the weight is expected next.
 	PendingReps int `json:"pending_reps,omitempty"`
 }

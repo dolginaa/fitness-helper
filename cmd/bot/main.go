@@ -66,7 +66,7 @@ func main() {
 
 	q := sqlcgen.New(pool)
 	svc := usecase.NewService(
-		postgres.NewCatalog(q),
+		postgres.NewCatalog(pool, q),
 		postgres.NewWorkout(pool, q),
 		postgres.NewSession(q),
 		postgres.NewAnalytics(q),

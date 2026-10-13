@@ -176,6 +176,12 @@ func (b *Bot) handleCallback(ctx context.Context, cq *chat.Callback) {
 		b.onBackToGroups(ctx, t, userID)
 	case keyboards.CallbackAddExercise:
 		b.onAddExercise(ctx, t, userID)
+	case keyboards.CallbackLoadKind:
+		b.onLoadKind(ctx, t, userID, arg(0), arg(1))
+	case keyboards.CallbackLoadConfig:
+		b.showLoadConfig(ctx, t, userID, arg(0))
+	case keyboards.CallbackLoadToggle:
+		b.onLoadToggle(ctx, t, userID, arg(0), arg(1))
 	case keyboards.CallbackEndWorkout:
 		b.onEndWorkout(ctx, t, userID, false)
 	case keyboards.CallbackEndWorkoutForce:

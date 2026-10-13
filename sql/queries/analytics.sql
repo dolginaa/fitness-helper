@@ -1,5 +1,5 @@
 -- name: ListCompletedWorkoutsInRange :many
-SELECT id, user_id, date, status
+SELECT id, user_id, date, status, finished_at
 FROM workouts
 WHERE user_id = $1 AND status = 'completed' AND date >= $2 AND date < $3
 ORDER BY date DESC;
@@ -10,6 +10,7 @@ SELECT
     w.user_id,
     w.date,
     w.status,
+    w.finished_at,
     COUNT(we.id)::int AS exercise_count,
     COALESCE(array_agg(DISTINCT mg.name) FILTER (WHERE mg.name IS NOT NULL), '{}')::text[] AS muscle_groups
 FROM workouts w
@@ -27,6 +28,7 @@ SELECT
     w.user_id,
     w.date,
     w.status,
+    w.finished_at,
     we.exercise_id,
     e.name AS exercise_name,
     mg.name AS muscle_group_name,
@@ -39,14 +41,14 @@ WHERE w.id = $1 AND w.user_id = $2
 ORDER BY we.id;
 
 -- name: ListExerciseProgress :many
-SELECT w.date, we.sets
+SELECT w.id AS workout_id, w.date, we.sets
 FROM workout_exercises we
 JOIN workouts w ON w.id = we.workout_id
 WHERE w.user_id = $1 AND w.status = 'completed' AND we.exercise_id = $2 AND w.date >= $3
 ORDER BY w.date ASC;
 
 -- name: ListMuscleGroupProgress :many
-SELECT w.date, e.id AS exercise_id, e.name AS exercise_name, we.sets
+SELECT w.id AS workout_id, w.date, e.id AS exercise_id, e.name AS exercise_name, we.sets
 FROM workout_exercises we
 JOIN workouts w ON w.id = we.workout_id
 JOIN exercises e ON e.id = we.exercise_id

@@ -18,6 +18,9 @@ type exercise struct {
 	ID      int    `json:"id"`
 	Name    string `json:"name"`
 	GroupID int    `json:"groupId"`
+	// Loads are the kinds of load the exercise is done with ("weight", "bodyweight", "band");
+	// the first is the default.
+	Loads []domain.LoadKind `json:"loads"`
 }
 
 type home struct {
@@ -43,11 +46,45 @@ type finish struct {
 	// Saved is false for a workout without exercises: it is discarded.
 	Saved   bool    `json:"saved"`
 	Workout workout `json:"workout"`
+	// Report is missing if it could not be put together; the workout is saved all the same.
+	Report *report `json:"report"`
+}
+
+type record struct {
+	Exercise string  `json:"exercise"`
+	Kind     string  `json:"kind"`
+	Value    float64 `json:"value"`
+	Previous float64 `json:"previous"`
+}
+
+type change struct {
+	Exercise string          `json:"exercise"`
+	Kind     domain.LoadKind `json:"kind"`
+	Before   progressPoint   `json:"before"`
+	Now      progressPoint   `json:"now"`
+}
+
+// report is what is worth saying when a workout ends, apart from what was done in it.
+type report struct {
+	// DurationMin is zero when the duration is not known.
+	DurationMin   int        `json:"durationMin"`
+	Sets          int        `json:"sets"`
+	Reps          int        `json:"reps"`
+	Volume        float64    `json:"volume"`
+	Groups        []string   `json:"groups"`
+	PrevDate      *time.Time `json:"prevDate"`
+	PrevVolume    float64    `json:"prevVolume"`
+	DaysSincePrev int        `json:"daysSincePrev"`
+	WeekWorkouts  int        `json:"weekWorkouts"`
+	Records       []record   `json:"records"`
+	Changes       []change   `json:"changes"`
+	FirstTime     []string   `json:"firstTime"`
 }
 
 type exerciseRow struct {
 	ID        int               `json:"id"`
 	Name      string            `json:"name"`
+	Loads     []domain.LoadKind `json:"loads"`
 	LastSets  []domain.SetEntry `json:"lastSets"`
 	LastAt    *time.Time        `json:"lastAt"`
 	TodaySets []domain.SetEntry `json:"todaySets"`
@@ -59,7 +96,9 @@ type exerciseList struct {
 }
 
 type exerciseLog struct {
-	Exercise exercise          `json:"exercise"`
+	Exercise exercise `json:"exercise"`
+	// Kind is the kind of load the chat is entering sets in; the page starts in the same one.
+	Kind     domain.LoadKind   `json:"kind"`
 	Sets     []domain.SetEntry `json:"sets"`
 	LastSets []domain.SetEntry `json:"lastSets"`
 	LastAt   *time.Time        `json:"lastAt"`
@@ -82,7 +121,12 @@ type historyPage struct {
 
 type progressPoint struct {
 	Date      time.Time         `json:"date"`
+	Kind      domain.LoadKind   `json:"kind"`
 	MaxWeight float64           `json:"maxWeight"`
+	Band      int               `json:"band"`
+	MaxReps   int               `json:"maxReps"`
+	TotalReps int               `json:"totalReps"`
+	Volume    float64           `json:"volume"`
 	Sets      []domain.SetEntry `json:"sets"`
 }
 
@@ -109,7 +153,7 @@ func timePtr(t time.Time) *time.Time {
 }
 
 func exerciseDTO(e domain.Exercise) exercise {
-	return exercise{ID: e.ID, Name: e.Name, GroupID: e.MuscleGroupID}
+	return exercise{ID: e.ID, Name: e.Name, GroupID: e.MuscleGroupID, Loads: e.Offered()}
 }
 
 func workoutDTO(d domain.WorkoutDetail) workout {
@@ -136,6 +180,7 @@ func exerciseListDTO(l usecase.ExerciseList) exerciseList {
 		out.Exercises = append(out.Exercises, exerciseRow{
 			ID:        r.Exercise.ID,
 			Name:      r.Exercise.Name,
+			Loads:     r.Exercise.Offered(),
 			LastSets:  sets(r.LastSets),
 			LastAt:    timePtr(r.LastAt),
 			TodaySets: sets(r.TodaySets),
@@ -147,6 +192,7 @@ func exerciseListDTO(l usecase.ExerciseList) exerciseList {
 func exerciseLogDTO(l usecase.ExerciseLog) exerciseLog {
 	return exerciseLog{
 		Exercise:   exerciseDTO(l.Exercise),
+		Kind:       l.Kind,
 		Sets:       sets(l.Sets),
 		LastSets:   sets(l.LastSets),
 		LastAt:     timePtr(l.LastAt),
@@ -171,17 +217,49 @@ func historyDTO(p usecase.HistoryPage) historyPage {
 	return out
 }
 
-// minChartPoints mirrors the charts package: a line needs two points.
+func pointDTO(p domain.ExerciseProgressPoint) progressPoint {
+	return progressPoint{
+		Date: p.Date, Kind: p.Kind, MaxWeight: p.MaxWeight, Band: p.Band,
+		MaxReps: p.MaxReps, TotalReps: p.TotalReps, Volume: p.Volume, Sets: sets(p.Sets),
+	}
+}
+
+// minChartPoints mirrors the charts package: a line needs two points of one kind of load.
 const minChartPoints = 2
 
 func progressDTO(p usecase.ExerciseProgress) progress {
+	_, series := domain.ChartSeries(p.Points)
 	out := progress{
 		Exercise: exerciseDTO(p.Exercise),
 		Points:   make([]progressPoint, 0, len(p.Points)),
-		HasChart: len(p.Points) >= minChartPoints,
+		HasChart: len(series) >= minChartPoints,
 	}
 	for _, pt := range p.Points {
-		out.Points = append(out.Points, progressPoint{Date: pt.Date, MaxWeight: pt.MaxWeight, Sets: sets(pt.Sets)})
+		out.Points = append(out.Points, pointDTO(pt))
+	}
+	return out
+}
+
+func reportDTO(r usecase.WorkoutReport) *report {
+	out := &report{
+		DurationMin:   int(r.Duration.Round(time.Minute).Minutes()),
+		Sets:          r.Sets,
+		Reps:          r.Reps,
+		Volume:        r.Volume,
+		Groups:        append([]string{}, r.Groups...),
+		PrevDate:      timePtr(r.PrevDate),
+		PrevVolume:    r.PrevVolume,
+		DaysSincePrev: r.DaysSincePrev,
+		WeekWorkouts:  r.WeekWorkouts,
+		Records:       make([]record, 0, len(r.Records)),
+		Changes:       make([]change, 0, len(r.Changes)),
+		FirstTime:     append([]string{}, r.FirstTime...),
+	}
+	for _, rec := range r.Records {
+		out.Records = append(out.Records, record{Exercise: rec.Exercise, Kind: string(rec.Kind), Value: rec.Value, Previous: rec.Previous})
+	}
+	for _, c := range r.Changes {
+		out.Changes = append(out.Changes, change{Exercise: c.Exercise, Kind: c.Load, Before: pointDTO(c.Before), Now: pointDTO(c.Now)})
 	}
 	return out
 }

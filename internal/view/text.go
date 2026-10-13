@@ -9,8 +9,6 @@ import (
 )
 
 const (
-	SetInputHint = "Не понял подход. Напишите повторы и вес через пробел, например <code>10 50</code> или <code>10 52,5</code>.\n" +
-		"Несколько подходов — через запятую: <code>10 50, 8 55</code>."
 	ExerciseNameHint = "Название должно быть от 2 до 100 символов. Напишите его ещё раз или нажмите «Отмена»."
 	WorkoutDateHint  = "Укажите дату: <code>/workout 15.03.2026</code>"
 	ImportHint       = "Пришлите сюда архив .zip с файлом export.json внутри (например, из выгрузки)."
@@ -74,8 +72,7 @@ func ExerciseList(list usecase.ExerciseList, inWorkout bool) string {
 		case len(r.TodaySets) > 0:
 			fmt.Fprintf(&sb, "✅ %s — сегодня %s", bold(r.Exercise.Name), Sets(r.TodaySets))
 		case len(r.LastSets) > 0:
-			fmt.Fprintf(&sb, "▫️ %s — %s: %s (раб. вес %s кг)", esc(r.Exercise.Name), ShortDate(r.LastAt),
-				Sets(r.LastSets), Weight(roundTo(domain.WorkingWeightFromSets(r.LastSets), 1)))
+			fmt.Fprintf(&sb, "▫️ %s — %s: %s%s", esc(r.Exercise.Name), ShortDate(r.LastAt), Sets(r.LastSets), workingWeight(r.LastSets))
 		default:
 			fmt.Fprintf(&sb, "▫️ %s — %s", esc(r.Exercise.Name), NoData)
 		}
@@ -87,6 +84,9 @@ func ExerciseList(list usecase.ExerciseList, inWorkout bool) string {
 func ExerciseLog(log usecase.ExerciseLog) string {
 	var sb strings.Builder
 	sb.WriteString(bold(log.Exercise.Name))
+	if len(log.Exercise.Offered()) > 1 {
+		fmt.Fprintf(&sb, " · %s", esc(strings.ToLower(LoadName(log.Kind))))
+	}
 	if len(log.LastSets) > 0 {
 		fmt.Fprintf(&sb, "\nПрошлый раз (%s): %s", ShortDate(log.LastAt), Sets(log.LastSets))
 	} else {
@@ -95,20 +95,47 @@ func ExerciseLog(log usecase.ExerciseLog) string {
 	if len(log.Sets) > 0 {
 		sb.WriteString("\n\nСегодня:")
 		for i, s := range log.Sets {
-			fmt.Fprintf(&sb, "\n%d) %d × %s кг", i+1, s.Reps, Weight(s.Weight))
+			fmt.Fprintf(&sb, "\n%d) %s", i+1, SetLine(s))
 		}
 	}
 	sb.WriteString("\n\n")
-	switch {
-	case log.PendingReps > 0:
-		fmt.Fprintf(&sb, "Повторов: <b>%d</b>. Теперь напишите вес в кг (0 — без веса).", log.PendingReps)
-	case len(log.Sets) > 0:
-		sb.WriteString("Следующий подход — повторы и вес: <code>10 50</code>")
-	default:
-		sb.WriteString("Напишите подход — повторы и вес: <code>10 50</code>\n" +
-			"Можно несколько сразу: <code>10 50, 8 55</code>")
+	if log.PendingReps > 0 {
+		fmt.Fprintf(&sb, "Повторов: <b>%d</b>. %s", log.PendingReps, pendingPrompt(log.Kind))
+		return sb.String()
 	}
+	sb.WriteString(setPrompt(log.Kind, len(log.Sets) > 0))
 	return sb.String()
+}
+
+func pendingPrompt(k domain.LoadKind) string {
+	if k == domain.LoadBand {
+		return fmt.Sprintf("Теперь уровень резинки (1–%d).", domain.MaxBand)
+	}
+	return "Теперь напишите вес в кг (0 — без веса)."
+}
+
+// setPrompt tells how to write the next set in the kind of load being logged.
+func setPrompt(k domain.LoadKind, hasSets bool) string {
+	var next, example, several string
+	switch k {
+	case domain.LoadBodyweight:
+		next, example, several = "Следующий подход — повторы", "<code>15</code>", "<code>15, 12, 10</code>"
+	case domain.LoadBand:
+		next, example, several = "Следующий подход — повторы и уровень резинки", "<code>12 4</code>", "<code>12 4, 10 3</code>"
+	default:
+		next, example, several = "Следующий подход — повторы и вес", "<code>10 50</code>", "<code>10 50, 8 55</code>"
+	}
+	if hasSets {
+		return next + ": " + example
+	}
+	return "Напишите подход" + strings.TrimPrefix(next, "Следующий подход") + ": " + example + "\nМожно несколько сразу: " + several
+}
+
+// LoadConfig is the screen where the kinds of load of an exercise are chosen.
+func LoadConfig(ex domain.Exercise) string {
+	return bold(ex.Name) + "\nС чем вы делаете это упражнение? Отметьте всё, что подходит: " +
+		"если вариантов несколько, на экране подхода появится переключатель.\n" +
+		"Это общая настройка упражнения, не только этой тренировки."
 }
 
 func NewExercisePrompt(group domain.MuscleGroup) string {
@@ -142,7 +169,10 @@ func WorkoutDetail(d domain.WorkoutDetail) string {
 			volume += domain.VolumeFromSets(ex.Sets)
 		}
 	}
-	fmt.Fprintf(&sb, "\nУпражнений: %d · подходов: %d · тоннаж: %s кг", len(d.Exercises), setCount, thousands(volume))
+	fmt.Fprintf(&sb, "\nУпражнений: %d · подходов: %d", len(d.Exercises), setCount)
+	if volume > 0 {
+		fmt.Fprintf(&sb, " · тоннаж: %s кг", thousands(volume))
+	}
 	return sb.String()
 }
 
@@ -190,8 +220,15 @@ func ExerciseProgress(p usecase.ExerciseProgress) string {
 	for i := len(p.Points) - 1; i >= 0 && i >= len(p.Points)-exerciseProgressRows; i-- {
 		fmt.Fprintf(&sb, "\n%s: %s", ShortDate(p.Points[i].Date), Sets(p.Points[i].Sets))
 	}
-	if first, last := p.Points[0], p.Points[len(p.Points)-1]; len(p.Points) > 1 {
+	kind, series := domain.ChartSeries(p.Points)
+	if len(series) < 2 {
+		return sb.String()
+	}
+	first, last := series[0], series[len(series)-1]
+	if kind == domain.LoadWeight {
 		fmt.Fprintf(&sb, "\n\nМакс. вес за полгода: %s → %s кг", Weight(first.MaxWeight), Weight(last.MaxWeight))
+	} else {
+		fmt.Fprintf(&sb, "\n\nМакс. повторов в подходе (%s): %d → %d", strings.ToLower(LoadName(kind)), first.MaxReps, last.MaxReps)
 	}
 	return sb.String()
 }
@@ -214,4 +251,27 @@ func Backup(s domain.UserSettings) string {
 func ImportResult(r domain.ImportResult) string {
 	return fmt.Sprintf("Импорт завершён.\nДобавлено тренировок: %d\nУпражнений: %d\nПропущено (уже есть или пустые): %d",
 		r.WorkoutsAdded, r.ExercisesAdded, r.WorkoutsSkipped)
+}
+
+// workingWeight is " (раб. вес 51.1 кг)" for sets with a weight and nothing for the rest.
+func workingWeight(sets []domain.SetEntry) string {
+	w := domain.WorkingWeightFromSets(sets)
+	if w == 0 {
+		return ""
+	}
+	return fmt.Sprintf(" (раб. вес %s кг)", Weight(roundTo(w, 1)))
+}
+
+// SetInputHint explains what was not understood and how to write a set in the kind of load being logged.
+func SetInputHint(k domain.LoadKind) string {
+	switch k {
+	case domain.LoadBodyweight:
+		return "Не понял подход. Напишите повторы, например <code>15</code>; с дополнительным весом — <code>8 5</code>.\n" +
+			"Несколько подходов — через запятую: <code>15, 12, 10</code>."
+	case domain.LoadBand:
+		return fmt.Sprintf("Не понял подход. Напишите повторы и уровень резинки от 1 до %d, например <code>12 4</code>.\n", domain.MaxBand) +
+			"Несколько подходов — через запятую: <code>12 4, 10 3</code>."
+	}
+	return "Не понял подход. Напишите повторы и вес через пробел, например <code>10 50</code> или <code>10 52,5</code>.\n" +
+		"Несколько подходов — через запятую: <code>10 50, 8 55</code>."
 }

@@ -15,32 +15,39 @@ type Querier interface {
 	CompleteActiveWorkoutsExcept(ctx context.Context, arg CompleteActiveWorkoutsExceptParams) error
 	CompleteAllActiveWorkoutsForUser(ctx context.Context, userID int64) error
 	CompleteWorkout(ctx context.Context, arg CompleteWorkoutParams) error
+	CountWorkoutExercisesOfExercise(ctx context.Context, exerciseID int32) (int32, error)
 	CreateWorkout(ctx context.Context, userID int64) (Workout, error)
+	DeleteExercise(ctx context.Context, id int32) error
 	DeleteUserWorkouts(ctx context.Context, userID int64) error
 	DeleteWorkout(ctx context.Context, arg DeleteWorkoutParams) error
 	DeleteWorkoutExercise(ctx context.Context, arg DeleteWorkoutExerciseParams) error
+	DeleteWorkoutExerciseByID(ctx context.Context, id int32) error
 	ExportUserWorkoutRows(ctx context.Context, userID int64) ([]ExportUserWorkoutRowsRow, error)
 	GetActiveWorkoutForUser(ctx context.Context, userID int64) (Workout, error)
 	GetExerciseByID(ctx context.Context, id int32) (Exercise, error)
-	GetExerciseByNameAndGroup(ctx context.Context, arg GetExerciseByNameAndGroupParams) (Exercise, error)
 	GetLastWorkoutExerciseData(ctx context.Context, arg GetLastWorkoutExerciseDataParams) (GetLastWorkoutExerciseDataRow, error)
 	GetMuscleGroupByID(ctx context.Context, id int32) (MuscleGroup, error)
-	GetMuscleGroupByName(ctx context.Context, name string) (MuscleGroup, error)
 	GetUserSettings(ctx context.Context, userID int64) (UserSetting, error)
 	GetUserWorkoutState(ctx context.Context, userID int64) (UserWorkoutState, error)
 	GetWorkoutByIDForUser(ctx context.Context, arg GetWorkoutByIDForUserParams) (Workout, error)
 	GetWorkoutDetailRows(ctx context.Context, arg GetWorkoutDetailRowsParams) ([]GetWorkoutDetailRowsRow, error)
+	GetWorkoutExerciseOfWorkout(ctx context.Context, arg GetWorkoutExerciseOfWorkoutParams) (WorkoutExercise, error)
 	InsertExercise(ctx context.Context, arg InsertExerciseParams) (Exercise, error)
-	InsertImportedWorkout(ctx context.Context, arg InsertImportedWorkoutParams) (Workout, error)
+	InsertImportedWorkout(ctx context.Context, arg InsertImportedWorkoutParams) (InsertImportedWorkoutRow, error)
 	InsertMuscleGroup(ctx context.Context, name string) (MuscleGroup, error)
 	ListCompletedWorkoutsInRange(ctx context.Context, arg ListCompletedWorkoutsInRangeParams) ([]Workout, error)
 	ListExerciseProgress(ctx context.Context, arg ListExerciseProgressParams) ([]ListExerciseProgressRow, error)
+	ListExerciseUsage(ctx context.Context) ([]ListExerciseUsageRow, error)
 	ListExercisesByMuscleGroup(ctx context.Context, muscleGroupID int32) ([]Exercise, error)
 	ListMuscleGroupProgress(ctx context.Context, arg ListMuscleGroupProgressParams) ([]ListMuscleGroupProgressRow, error)
 	ListMuscleGroups(ctx context.Context) ([]MuscleGroup, error)
 	ListUsersDueWeeklyBackup(ctx context.Context, lastBackupAt pgtype.Timestamptz) ([]int64, error)
+	ListWorkoutExercisesOfExercise(ctx context.Context, exerciseID int32) ([]WorkoutExercise, error)
 	ListWorkoutSummaries(ctx context.Context, arg ListWorkoutSummariesParams) ([]ListWorkoutSummariesRow, error)
+	MoveWorkoutExercise(ctx context.Context, arg MoveWorkoutExerciseParams) error
 	SetLastBackupAt(ctx context.Context, arg SetLastBackupAtParams) error
+	UpdateExerciseLoads(ctx context.Context, arg UpdateExerciseLoadsParams) error
+	UpdateWorkoutExerciseSets(ctx context.Context, arg UpdateWorkoutExerciseSetsParams) error
 	UpsertUserSettings(ctx context.Context, arg UpsertUserSettingsParams) error
 	UpsertUserWorkoutState(ctx context.Context, arg UpsertUserWorkoutStateParams) error
 	UpsertWorkoutExercise(ctx context.Context, arg UpsertWorkoutExerciseParams) (WorkoutExercise, error)

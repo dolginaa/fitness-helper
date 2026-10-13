@@ -9,4 +9,5 @@ var (
 	ErrNoActiveWorkout    = errors.New("no active workout")
 	ErrNoLastExerciseData = errors.New("no previous data for exercise")
 	ErrNotEnoughData      = errors.New("not enough data")
+	ErrInUse              = errors.New("exercise is in workouts")
 )

@@ -23,6 +23,9 @@ const (
 	CallbackExercises       = "done"
 	CallbackGroups          = "next"
 	CallbackAddExercise     = "addex"
+	CallbackLoadKind        = "knd"
+	CallbackLoadConfig      = "ldcfg"
+	CallbackLoadToggle      = "ldt"
 	CallbackEndWorkout      = "end"
 	CallbackEndWorkoutForce = "end!"
 
@@ -148,9 +151,38 @@ func WorkoutExercises(list usecase.ExerciseList) chat.Keyboard {
 	return markup(rows...)
 }
 
+// loadIndex is how a kind of load goes into the callback data.
+func loadIndex(k domain.LoadKind) int {
+	for i, l := range domain.AllLoads {
+		if l == k {
+			return i
+		}
+	}
+	return 0
+}
+
+// LoadFromIndex is the opposite of the index in the callback data.
+func LoadFromIndex(i int) (domain.LoadKind, bool) {
+	if i < 0 || i >= len(domain.AllLoads) {
+		return "", false
+	}
+	return domain.AllLoads[i], true
+}
+
 func ExerciseLog(log usecase.ExerciseLog) chat.Keyboard {
 	var rows [][]chat.Button
 	id := log.Exercise.ID
+	if offered := log.Exercise.Offered(); len(offered) > 1 {
+		kinds := make([]chat.Button, 0, len(offered))
+		for _, k := range offered {
+			label := view.LoadName(k)
+			if k == log.Kind {
+				label = "● " + label
+			}
+			kinds = append(kinds, button(label, CallbackLoadKind, id, loadIndex(k)))
+		}
+		rows = append(rows, kinds)
+	}
 	switch {
 	case log.PendingReps > 0:
 		rows = append(rows, row(button("↩️ Отменить повторы", CallbackUndoSet, id)))
@@ -158,7 +190,7 @@ func ExerciseLog(log usecase.ExerciseLog) chat.Keyboard {
 		var actions []chat.Button
 		if log.Suggestion != nil {
 			label := "➕ Ещё " + view.Set(*log.Suggestion)
-			if *log.Suggestion != log.Sets[len(log.Sets)-1] {
+			if last := log.Sets[len(log.Sets)-1]; *log.Suggestion != last {
 				// Not a repeat of the previous set but the next step of the last workout.
 				label = "➕ Дальше " + view.Set(*log.Suggestion)
 			}
@@ -168,11 +200,25 @@ func ExerciseLog(log usecase.ExerciseLog) chat.Keyboard {
 	case log.Suggestion != nil:
 		rows = append(rows, row(button("🔁 "+view.Set(*log.Suggestion)+" — как в прошлый раз", CallbackRepeatSet, id)))
 	}
+	done := button("◀️ К упражнениям", CallbackExercises)
 	if len(log.Sets) > 0 {
-		rows = append(rows, row(button("✅ Готово, к упражнениям", CallbackExercises)))
-	} else {
-		rows = append(rows, row(button("◀️ К упражнениям", CallbackExercises)))
+		done = button("✅ Готово, к упражнениям", CallbackExercises)
 	}
+	rows = append(rows, row(done, button("⚙️ Нагрузка", CallbackLoadConfig, id)))
+	return markup(rows...)
+}
+
+// LoadConfig lets the user tick the kinds of load an exercise is done with.
+func LoadConfig(ex domain.Exercise) chat.Keyboard {
+	rows := make([][]chat.Button, 0, len(domain.AllLoads)+1)
+	for _, k := range domain.AllLoads {
+		mark := "⬜ "
+		if ex.Allows(k) {
+			mark = "✅ "
+		}
+		rows = append(rows, row(button(mark+view.LoadName(k), CallbackLoadToggle, ex.ID, loadIndex(k))))
+	}
+	rows = append(rows, row(button("◀️ Готово", CallbackResume)))
 	return markup(rows...)
 }
 

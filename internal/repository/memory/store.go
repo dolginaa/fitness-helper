@@ -48,6 +48,12 @@ func (s *Store) AddGroup(name string) domain.MuscleGroup {
 	return g
 }
 
+// AddExercise seeds an exercise of an existing group.
+func (s *Store) AddExercise(groupID int, name string, loads ...domain.LoadKind) domain.Exercise {
+	e, _ := s.CreateExercise(context.Background(), name, groupID, loads)
+	return e
+}
+
 // AddCompletedWorkout seeds a finished workout with one exercise.
 func (s *Store) AddCompletedWorkout(userID int64, at time.Time, exerciseID int, sets ...domain.SetEntry) domain.Workout {
 	w := domain.Workout{ID: s.id(), UserID: userID, Date: at, Status: domain.WorkoutCompleted}
@@ -90,16 +96,26 @@ func (s *Store) GetExercise(ctx context.Context, id int) (domain.Exercise, error
 	return domain.Exercise{}, domain.ErrNotFound
 }
 
-func (s *Store) CreateExercise(ctx context.Context, name string, muscleGroupID int) (domain.Exercise, error) {
-	e := domain.Exercise{ID: s.id(), Name: name, MuscleGroupID: muscleGroupID}
+func (s *Store) CreateExercise(ctx context.Context, name string, muscleGroupID int, loads []domain.LoadKind) (domain.Exercise, error) {
+	e := domain.Exercise{ID: s.id(), Name: name, MuscleGroupID: muscleGroupID, Loads: append([]domain.LoadKind(nil), loads...)}
 	s.exercises = append(s.exercises, e)
 	return e, nil
+}
+
+func (s *Store) SetExerciseLoads(ctx context.Context, id int, loads []domain.LoadKind) error {
+	for i := range s.exercises {
+		if s.exercises[i].ID == id {
+			s.exercises[i].Loads = append([]domain.LoadKind(nil), loads...)
+			return nil
+		}
+	}
+	return domain.ErrNotFound
 }
 
 func (s *Store) GetOrCreateExerciseByNameAndGroup(ctx context.Context, name, muscleGroup string) (domain.Exercise, error) {
 	var group *domain.MuscleGroup
 	for i := range s.groups {
-		if s.groups[i].Name == muscleGroup {
+		if domain.ExerciseKey(s.groups[i].Name) == domain.ExerciseKey(muscleGroup) {
 			group = &s.groups[i]
 		}
 	}
@@ -108,11 +124,97 @@ func (s *Store) GetOrCreateExerciseByNameAndGroup(ctx context.Context, name, mus
 		group = &g
 	}
 	for _, e := range s.exercises {
-		if e.Name == name && e.MuscleGroupID == group.ID {
+		if e.MuscleGroupID == group.ID && domain.ExerciseKey(e.Name) == domain.ExerciseKey(name) {
 			return e, nil
 		}
 	}
-	return s.CreateExercise(ctx, name, group.ID)
+	return s.CreateExercise(ctx, name, group.ID, nil)
+}
+
+func (s *Store) ListExerciseUsage(ctx context.Context) ([]domain.ExerciseUsage, error) {
+	out := make([]domain.ExerciseUsage, 0, len(s.exercises))
+	for _, e := range s.exercises {
+		g, _ := s.GetMuscleGroup(ctx, e.MuscleGroupID)
+		u := domain.ExerciseUsage{Exercise: e, Group: g.Name}
+		for _, we := range s.logged {
+			if we.ExerciseID == e.ID {
+				u.Workouts++
+			}
+		}
+		out = append(out, u)
+	}
+	return out, nil
+}
+
+func (s *Store) MergeExercises(ctx context.Context, from, to int) error {
+	if from == to {
+		return domain.ErrInvalidInput
+	}
+	src, err := s.GetExercise(ctx, from)
+	if err != nil {
+		return err
+	}
+	target, err := s.GetExercise(ctx, to)
+	if err != nil {
+		return err
+	}
+	var kept []domain.WorkoutExercise
+	for _, we := range s.logged {
+		if we.ExerciseID != from {
+			kept = append(kept, we)
+		}
+	}
+	for _, we := range s.logged {
+		if we.ExerciseID != from {
+			continue
+		}
+		joined := false
+		for i := range kept {
+			if kept[i].WorkoutID == we.WorkoutID && kept[i].ExerciseID == to {
+				kept[i].Sets = append(append([]domain.SetEntry(nil), kept[i].Sets...), we.Sets...)
+				joined = true
+			}
+		}
+		if !joined {
+			we.ExerciseID = to
+			kept = append(kept, we)
+		}
+	}
+	s.logged = kept
+	for _, k := range src.Loads {
+		if !target.Allows(k) {
+			target.Loads = append(target.Offered(), k)
+		}
+	}
+	for i := range s.exercises {
+		if s.exercises[i].ID == to {
+			s.exercises[i].Loads = target.Loads
+		}
+	}
+	rest := s.exercises[:0]
+	for _, e := range s.exercises {
+		if e.ID != from {
+			rest = append(rest, e)
+		}
+	}
+	s.exercises = rest
+	return nil
+}
+
+func (s *Store) DeleteUnusedExercise(ctx context.Context, id int) error {
+	for _, we := range s.logged {
+		if we.ExerciseID == id {
+			return domain.ErrInUse
+		}
+	}
+	rest := s.exercises[:0]
+	for _, e := range s.exercises {
+		if e.ID != id {
+			rest = append(rest, e)
+		}
+	}
+	s.exercises = rest
+	return nil
 }
 
 // Workouts
@@ -153,9 +255,10 @@ func (s *Store) GetWorkoutForUser(ctx context.Context, workoutID int, userID int
 	return domain.Workout{}, domain.ErrNotFound
 }
 
-func (s *Store) CompleteWorkout(ctx context.Context, userID int64, workoutID int) error {
+func (s *Store) CompleteWorkout(ctx context.Context, userID int64, workoutID int, at time.Time) error {
 	if w := s.workout(workoutID, userID); w != nil {
 		w.Status = domain.WorkoutCompleted
+		w.FinishedAt = at
 	}
 	return nil
 }
@@ -340,12 +443,7 @@ func (s *Store) ListExerciseProgress(ctx context.Context, userID int64, exercise
 		}
 		for _, we := range s.logged {
 			if we.WorkoutID == ws[i].ID && we.ExerciseID == exerciseID {
-				out = append(out, domain.ExerciseProgressPoint{
-					Date:          ws[i].Date,
-					MaxWeight:     domain.MaxWeightFromSets(we.Sets),
-					WorkingWeight: domain.WorkingWeightFromSets(we.Sets),
-					Sets:          we.Sets,
-				})
+				out = append(out, domain.NewProgressPoint(ws[i].ID, ws[i].Date, we.Sets))
 			}
 		}
 	}

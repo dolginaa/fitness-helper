@@ -22,6 +22,8 @@ type ExerciseList struct {
 // ExerciseLog is the state of the exercise being logged in the active workout.
 type ExerciseLog struct {
 	Exercise domain.Exercise
+	// Kind is the kind of load the next set is entered in; it is one of Exercise.Offered().
+	Kind     domain.LoadKind
 	Sets     []domain.SetEntry
 	LastSets []domain.SetEntry
 	LastAt   time.Time

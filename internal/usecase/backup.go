@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"slices"
 	"time"
 
 	"github.com/adolgina/fitness-helper/internal/domain"
@@ -150,6 +151,9 @@ func (s *Service) importOneWorkout(ctx context.Context, userID int64, wo domain.
 				continue
 			}
 		}
+		if err := s.ensureLoads(ctx, e, ex.Sets); err != nil {
+			return added, false, err
+		}
 		if err := s.backup.AddExerciseToWorkout(ctx, wid, e.ID, ex.Sets); err != nil {
 			return added, false, err
 		}
@@ -175,4 +179,18 @@ func (s *Service) ListUsersDueWeeklyBackup(ctx context.Context) ([]int64, error)
 
 func (s *Service) MarkBackupSent(ctx context.Context, userID int64) error {
 	return s.settings.SetLastBackupAt(ctx, userID, time.Now())
+}
+
+// ensureLoads lets the exercise be done with every kind of load its imported sets were done with.
+func (s *Service) ensureLoads(ctx context.Context, e domain.Exercise, sets []domain.SetEntry) error {
+	loads := slices.Clone(e.Offered())
+	for _, set := range sets {
+		if k := set.Load(); !slices.Contains(loads, k) && slices.Contains(domain.AllLoads, k) {
+			loads = append(loads, k)
+		}
+	}
+	if len(loads) == len(e.Offered()) {
+		return nil
+	}
+	return s.catalog.SetExerciseLoads(ctx, e.ID, loads)
 }

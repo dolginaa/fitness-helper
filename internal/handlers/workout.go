@@ -91,7 +91,7 @@ func (b *Bot) onExercise(ctx context.Context, t target, userID int64, exerciseID
 func (b *Bot) onSetInput(ctx context.Context, t target, userID int64, text string) {
 	log, err := b.svc.LogInput(ctx, userID, text)
 	if errors.Is(err, domain.ErrInvalidInput) {
-		b.say(ctx, t.chatID, view.SetInputHint)
+		b.say(ctx, t.chatID, b.setInputHint(ctx, userID))
 		return
 	}
 	if err != nil {
@@ -117,6 +117,52 @@ func (b *Bot) onUndoSet(ctx context.Context, t target, userID int64, exerciseID 
 		return
 	}
 	b.showExerciseLog(ctx, t, log)
+}
+
+func (b *Bot) onLoadKind(ctx context.Context, t target, userID int64, exerciseID, kindIndex int) {
+	kind, ok := keyboards.LoadFromIndex(kindIndex)
+	if !ok {
+		b.fail(ctx, t, domain.ErrInvalidState)
+		return
+	}
+	log, err := b.svc.SetLoadKind(ctx, userID, exerciseID, kind)
+	if err != nil {
+		b.fail(ctx, t, err)
+		return
+	}
+	b.showExerciseLog(ctx, t, log)
+}
+
+func (b *Bot) showLoadConfig(ctx context.Context, t target, userID int64, exerciseID int) {
+	log, err := b.svc.CurrentExerciseLog(ctx, userID)
+	if err != nil {
+		b.fail(ctx, t, err)
+		return
+	}
+	if log.Exercise.ID != exerciseID {
+		b.fail(ctx, t, domain.ErrInvalidState)
+		return
+	}
+	b.show(ctx, t, view.LoadConfig(log.Exercise), keyboards.LoadConfig(log.Exercise))
+}
+
+func (b *Bot) onLoadToggle(ctx context.Context, t target, userID int64, exerciseID, kindIndex int) {
+	kind, ok := keyboards.LoadFromIndex(kindIndex)
+	if !ok {
+		b.fail(ctx, t, domain.ErrInvalidState)
+		return
+	}
+	log, err := b.svc.ToggleLoad(ctx, userID, exerciseID, kind)
+	if errors.Is(err, domain.ErrInvalidInput) {
+		// The last kind cannot be taken away: the screen stays as it is.
+		b.showLoadConfig(ctx, t, userID, exerciseID)
+		return
+	}
+	if err != nil {
+		b.fail(ctx, t, err)
+		return
+	}
+	b.show(ctx, t, view.LoadConfig(log.Exercise), keyboards.LoadConfig(log.Exercise))
 }
 
 func (b *Bot) onBackToExercises(ctx context.Context, t target, userID int64) {
@@ -179,5 +225,25 @@ func (b *Bot) onEndWorkout(ctx context.Context, t target, userID int64, confirme
 		b.fail(ctx, t, err)
 		return
 	}
-	b.show(ctx, t, view.WorkoutFinished(d), keyboards.WorkoutFinished())
+	if len(d.Exercises) == 0 {
+		b.show(ctx, t, view.WorkoutFinished(d), keyboards.WorkoutFinished())
+		return
+	}
+	// The workout is saved already: a failure of the summary must not hide that.
+	report, err := b.svc.WorkoutReport(ctx, userID, d)
+	if err != nil {
+		b.log.Error("workout report", "err", err)
+		b.show(ctx, t, view.WorkoutFinished(d), keyboards.WorkoutFinished())
+		return
+	}
+	b.show(ctx, t, view.WorkoutReport(report), keyboards.WorkoutFinished())
+}
+
+// setInputHint shows how to write a set in the kind of load the user is logging now.
+func (b *Bot) setInputHint(ctx context.Context, userID int64) string {
+	log, err := b.svc.CurrentExerciseLog(ctx, userID)
+	if err != nil {
+		return view.SetInputHint(domain.LoadWeight)
+	}
+	return view.SetInputHint(log.Kind)
 }

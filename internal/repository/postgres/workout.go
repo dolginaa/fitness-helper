@@ -63,10 +63,11 @@ func (w *Workout) GetWorkoutForUser(ctx context.Context, workoutID int, userID i
 	return mapWorkout(wo), nil
 }
 
-func (w *Workout) CompleteWorkout(ctx context.Context, userID int64, workoutID int) error {
+func (w *Workout) CompleteWorkout(ctx context.Context, userID int64, workoutID int, at time.Time) error {
 	err := w.q.CompleteWorkout(ctx, sqlcgen.CompleteWorkoutParams{
-		ID:     int32(workoutID),
-		UserID: userID,
+		ID:         int32(workoutID),
+		UserID:     userID,
+		FinishedAt: pgTimestamptz(at),
 	})
 	return mapErr(err)
 }
@@ -135,15 +136,12 @@ func (w *Workout) GetLastExerciseData(ctx context.Context, userID int64, exercis
 }
 
 func mapWorkout(w sqlcgen.Workout) domain.Workout {
-	var t time.Time
-	if w.Date.Valid {
-		t = w.Date.Time
-	}
 	return domain.Workout{
-		ID:     int(w.ID),
-		UserID: w.UserID,
-		Date:   t,
-		Status: domain.WorkoutStatus(w.Status),
+		ID:         int(w.ID),
+		UserID:     w.UserID,
+		Date:       timeFromPg(w.Date),
+		FinishedAt: timeFromPg(w.FinishedAt),
+		Status:     domain.WorkoutStatus(w.Status),
 	}
 }
 

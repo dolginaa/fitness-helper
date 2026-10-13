@@ -25,8 +25,8 @@ func newFixture(t *testing.T) fixture {
 	t.Helper()
 	store := memory.NewStore()
 	legs := store.AddGroup("ноги")
-	press, _ := store.CreateExercise(context.Background(), "Жим ногами", legs.ID)
-	calf, _ := store.CreateExercise(context.Background(), "Икры", legs.ID)
+	press := store.AddExercise(legs.ID, "Жим ногами")
+	calf := store.AddExercise(legs.ID, "Икры")
 	return fixture{
 		svc:   NewService(store, store, store, store, store, store),
 		store: store,
@@ -414,20 +414,20 @@ func TestCreateExercise(t *testing.T) {
 	t.Parallel()
 	f := newFixture(t)
 	ctx := context.Background()
-	ex, err := f.svc.CreateExercise(ctx, f.legs.ID, " Выпады  назад ")
+	ex, err := f.svc.CreateExercise(ctx, f.legs.ID, " Выпады  назад ", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if ex.Name != "Выпады назад" || ex.MuscleGroupID != f.legs.ID {
 		t.Fatalf("unexpected exercise: %+v", ex)
 	}
-	if same, _ := f.svc.CreateExercise(ctx, f.legs.ID, "выпады назад"); same.ID != ex.ID {
+	if same, _ := f.svc.CreateExercise(ctx, f.legs.ID, "выпады назад", nil); same.ID != ex.ID {
 		t.Fatalf("duplicate created: %+v", same)
 	}
-	if _, err := f.svc.CreateExercise(ctx, f.legs.ID, "я"); !errors.Is(err, domain.ErrInvalidInput) {
+	if _, err := f.svc.CreateExercise(ctx, f.legs.ID, "я", nil); !errors.Is(err, domain.ErrInvalidInput) {
 		t.Fatalf("want ErrInvalidInput, got %v", err)
 	}
-	if _, err := f.svc.CreateExercise(ctx, 999, "Выпады"); !errors.Is(err, domain.ErrNotFound) {
+	if _, err := f.svc.CreateExercise(ctx, 999, "Выпады", nil); !errors.Is(err, domain.ErrNotFound) {
 		t.Fatalf("unknown group: want ErrNotFound, got %v", err)
 	}
 }
@@ -448,7 +448,7 @@ func TestSuggestSet(t *testing.T) {
 		{"no history: repeat today", sets(10, 50), nil, &domain.SetEntry{Reps: 10, Weight: 50}},
 	}
 	for _, c := range cases {
-		got := suggestSet(c.today, c.last)
+		got := suggestSet(c.today, c.last, domain.LoadWeight)
 		if (got == nil) != (c.want == nil) || (got != nil && *got != *c.want) {
 			t.Fatalf("%s: got %+v want %+v", c.name, got, c.want)
 		}

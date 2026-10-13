@@ -9,33 +9,28 @@ import (
 	"context"
 )
 
+const deleteExercise = `-- name: DeleteExercise :exec
+DELETE FROM exercises WHERE id = $1
+`
+
+func (q *Queries) DeleteExercise(ctx context.Context, id int32) error {
+	_, err := q.db.Exec(ctx, deleteExercise, id)
+	return err
+}
+
 const getExerciseByID = `-- name: GetExerciseByID :one
-SELECT id, name, muscle_group_id FROM exercises WHERE id = $1
+SELECT id, name, muscle_group_id, loads FROM exercises WHERE id = $1
 `
 
 func (q *Queries) GetExerciseByID(ctx context.Context, id int32) (Exercise, error) {
 	row := q.db.QueryRow(ctx, getExerciseByID, id)
 	var i Exercise
-	err := row.Scan(&i.ID, &i.Name, &i.MuscleGroupID)
-	return i, err
-}
-
-const getExerciseByNameAndGroup = `-- name: GetExerciseByNameAndGroup :one
-SELECT e.id, e.name, e.muscle_group_id
-FROM exercises e
-JOIN muscle_groups mg ON mg.id = e.muscle_group_id
-WHERE e.name = $1 AND mg.name = $2
-`
-
-type GetExerciseByNameAndGroupParams struct {
-	Name   string `json:"name"`
-	Name_2 string `json:"name_2"`
-}
-
-func (q *Queries) GetExerciseByNameAndGroup(ctx context.Context, arg GetExerciseByNameAndGroupParams) (Exercise, error) {
-	row := q.db.QueryRow(ctx, getExerciseByNameAndGroup, arg.Name, arg.Name_2)
-	var i Exercise
-	err := row.Scan(&i.ID, &i.Name, &i.MuscleGroupID)
+	err := row.Scan(
+		&i.ID,
+		&i.Name,
+		&i.MuscleGroupID,
+		&i.Loads,
+	)
 	return i, err
 }
 
@@ -50,30 +45,25 @@ func (q *Queries) GetMuscleGroupByID(ctx context.Context, id int32) (MuscleGroup
 	return i, err
 }
 
-const getMuscleGroupByName = `-- name: GetMuscleGroupByName :one
-SELECT id, name FROM muscle_groups WHERE name = $1
-`
-
-func (q *Queries) GetMuscleGroupByName(ctx context.Context, name string) (MuscleGroup, error) {
-	row := q.db.QueryRow(ctx, getMuscleGroupByName, name)
-	var i MuscleGroup
-	err := row.Scan(&i.ID, &i.Name)
-	return i, err
-}
-
 const insertExercise = `-- name: InsertExercise :one
-INSERT INTO exercises (name, muscle_group_id) VALUES ($1, $2) RETURNING id, name, muscle_group_id
+INSERT INTO exercises (name, muscle_group_id, loads) VALUES ($1, $2, $3) RETURNING id, name, muscle_group_id, loads
 `
 
 type InsertExerciseParams struct {
-	Name          string `json:"name"`
-	MuscleGroupID int32  `json:"muscle_group_id"`
+	Name          string   `json:"name"`
+	MuscleGroupID int32    `json:"muscle_group_id"`
+	Loads         []string `json:"loads"`
 }
 
 func (q *Queries) InsertExercise(ctx context.Context, arg InsertExerciseParams) (Exercise, error) {
-	row := q.db.QueryRow(ctx, insertExercise, arg.Name, arg.MuscleGroupID)
+	row := q.db.QueryRow(ctx, insertExercise, arg.Name, arg.MuscleGroupID, arg.Loads)
 	var i Exercise
-	err := row.Scan(&i.ID, &i.Name, &i.MuscleGroupID)
+	err := row.Scan(
+		&i.ID,
+		&i.Name,
+		&i.MuscleGroupID,
+		&i.Loads,
+	)
 	return i, err
 }
 
@@ -88,8 +78,53 @@ func (q *Queries) InsertMuscleGroup(ctx context.Context, name string) (MuscleGro
 	return i, err
 }
 
+const listExerciseUsage = `-- name: ListExerciseUsage :many
+SELECT e.id, e.name, e.muscle_group_id, e.loads, mg.name AS group_name, COUNT(we.id)::int AS workouts
+FROM exercises e
+JOIN muscle_groups mg ON mg.id = e.muscle_group_id
+LEFT JOIN workout_exercises we ON we.exercise_id = e.id
+GROUP BY e.id, mg.id
+ORDER BY mg.id, e.id
+`
+
+type ListExerciseUsageRow struct {
+	ID            int32    `json:"id"`
+	Name          string   `json:"name"`
+	MuscleGroupID int32    `json:"muscle_group_id"`
+	Loads         []string `json:"loads"`
+	GroupName     string   `json:"group_name"`
+	Workouts      int32    `json:"workouts"`
+}
+
+func (q *Queries) ListExerciseUsage(ctx context.Context) ([]ListExerciseUsageRow, error) {
+	rows, err := q.db.Query(ctx, listExerciseUsage)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListExerciseUsageRow{}
+	for rows.Next() {
+		var i ListExerciseUsageRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Name,
+			&i.MuscleGroupID,
+			&i.Loads,
+			&i.GroupName,
+			&i.Workouts,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listExercisesByMuscleGroup = `-- name: ListExercisesByMuscleGroup :many
-SELECT id, name, muscle_group_id FROM exercises WHERE muscle_group_id = $1 ORDER BY id
+SELECT id, name, muscle_group_id, loads FROM exercises WHERE muscle_group_id = $1 ORDER BY id
 `
 
 func (q *Queries) ListExercisesByMuscleGroup(ctx context.Context, muscleGroupID int32) ([]Exercise, error) {
@@ -101,7 +136,12 @@ func (q *Queries) ListExercisesByMuscleGroup(ctx context.Context, muscleGroupID 
 	items := []Exercise{}
 	for rows.Next() {
 		var i Exercise
-		if err := rows.Scan(&i.ID, &i.Name, &i.MuscleGroupID); err != nil {
+		if err := rows.Scan(
+			&i.ID,
+			&i.Name,
+			&i.MuscleGroupID,
+			&i.Loads,
+		); err != nil {
 			return nil, err
 		}
 		items = append(items, i)
@@ -134,4 +174,18 @@ func (q *Queries) ListMuscleGroups(ctx context.Context) ([]MuscleGroup, error) {
 		return nil, err
 	}
 	return items, nil
+}
+
+const updateExerciseLoads = `-- name: UpdateExerciseLoads :exec
+UPDATE exercises SET loads = $2 WHERE id = $1
+`
+
+type UpdateExerciseLoadsParams struct {
+	ID    int32    `json:"id"`
+	Loads []string `json:"loads"`
+}
+
+func (q *Queries) UpdateExerciseLoads(ctx context.Context, arg UpdateExerciseLoadsParams) error {
+	_, err := q.db.Exec(ctx, updateExerciseLoads, arg.ID, arg.Loads)
+	return err
 }

@@ -37,10 +37,67 @@ func New() Renderer {
 	return Renderer{}
 }
 
-// ExerciseProgress draws how the exercise changed from workout to workout:
-// the top weight as a line and the lifted volume as bars under it.
-// An exercise done without weight gets a single chart of reps.
+// panels are the two charts an exercise gets: a line on top and bars under it.
+type panels struct {
+	topTitle, bottomTitle string
+	top, bottom           []float64
+}
+
+// exercisePanels chooses what to draw for the kind of load. Weights, reps and band levels
+// cannot share an axis, so a chart is made of one kind (see domain.ChartSeries).
+func exercisePanels(kind domain.LoadKind, points []domain.ExerciseProgressPoint) panels {
+	var pn panels
+	weighted := false
+	for _, p := range points {
+		pn.top = append(pn.top, 0)
+		pn.bottom = append(pn.bottom, float64(p.TotalReps))
+		weighted = weighted || p.MaxWeight > 0
+	}
+	for i, p := range points {
+		switch kind {
+		case domain.LoadBand:
+			pn.top[i] = float64(p.Band)
+		case domain.LoadBodyweight:
+			pn.top[i] = float64(p.MaxReps)
+		default:
+			pn.top[i] = p.MaxWeight
+			if weighted {
+				pn.bottom[i] = p.Volume
+			}
+		}
+	}
+	switch {
+	case kind == domain.LoadBand:
+		pn.topTitle = fmt.Sprintf("Резинка, уровень (1 — тонкая, %d — толстая)", domain.MaxBand)
+		pn.bottomTitle = "Всего повторов за тренировку"
+	case kind == domain.LoadBodyweight:
+		pn.topTitle = "Макс. повторов в подходе"
+		pn.bottomTitle = "Всего повторов за тренировку"
+	case weighted:
+		pn.topTitle = "Макс. вес, кг"
+		pn.bottomTitle = "Объём за тренировку (вес × повторы), кг"
+	default:
+		// An exercise done without weight: one chart of reps.
+		pn.topTitle, pn.top, pn.bottom = "Повторов за тренировку", pn.bottom, nil
+	}
+	return pn
+}
+
+// loadLabel names the kind in a subtitle; plain weight needs no note.
+func loadLabel(kind domain.LoadKind) string {
+	switch kind {
+	case domain.LoadBodyweight:
+		return "свой вес"
+	case domain.LoadBand:
+		return "с резинкой"
+	}
+	return ""
+}
+
+// ExerciseProgress draws how the exercise changed from workout to workout: the top weight
+// (or reps, or band level) as a line and the volume (or total reps) as bars under it.
 func (Renderer) ExerciseProgress(name string, points []domain.ExerciseProgressPoint) ([]byte, error) {
+	kind, points := domain.ChartSeries(points)
 	if len(points) < minPoints {
 		return nil, domain.ErrNotEnoughData
 	}
@@ -49,34 +106,26 @@ func (Renderer) ExerciseProgress(name string, points []domain.ExerciseProgressPo
 		return nil, err
 	}
 	first, last := points[0].Date, points[len(points)-1].Date
+	subtitle := fmt.Sprintf("%s · тренировок: %d", period(first, last), len(points))
+	if l := loadLabel(kind); l != "" {
+		subtitle += " · " + l
+	}
 	c.text(c.fit(name, sizeTitle, canvasWidth-2*margin), margin, titleY, sizeTitle, colorInk, alignLeft)
-	c.text(fmt.Sprintf("%s · тренировок: %d", period(first, last), len(points)),
-		margin, subtitleY, sizeLabel, colorMuted, alignLeft)
+	c.text(subtitle, margin, subtitleY, sizeLabel, colorMuted, alignLeft)
 
 	x := timeScale(first, last, plotLeft+plotInset, plotRight-plotInset)
 	xs := make([]int, len(points))
-	weights := make([]float64, len(points))
-	volumes := make([]float64, len(points))
-	reps := make([]float64, len(points))
-	weighted := false
 	for i, p := range points {
 		xs[i] = x(p.Date)
-		weights[i] = p.MaxWeight
-		volumes[i] = domain.VolumeFromSets(p.Sets)
-		for _, s := range p.Sets {
-			reps[i] += float64(s.Reps)
-		}
-		weighted = weighted || p.MaxWeight > 0
 	}
-
-	if weighted {
-		c.text("Макс. вес, кг", margin, panelLabelY, sizeLabel, colorSecondary, alignLeft)
-		c.linePanel(xs, weights, panelTop, weightBot)
-		c.text("Объём за тренировку (вес × повторы), кг", margin, volumeLabel, sizeLabel, colorSecondary, alignLeft)
-		c.barPanel(xs, volumes, volumeTop, panelBottom)
+	pn := exercisePanels(kind, points)
+	c.text(pn.topTitle, margin, panelLabelY, sizeLabel, colorSecondary, alignLeft)
+	if pn.bottom == nil {
+		c.linePanel(xs, pn.top, panelTop, panelBottom)
 	} else {
-		c.text("Повторов за тренировку", margin, panelLabelY, sizeLabel, colorSecondary, alignLeft)
-		c.linePanel(xs, reps, panelTop, panelBottom)
+		c.linePanel(xs, pn.top, panelTop, weightBot)
+		c.text(pn.bottomTitle, margin, volumeLabel, sizeLabel, colorSecondary, alignLeft)
+		c.barPanel(xs, pn.bottom, volumeTop, panelBottom)
 	}
 	c.dateAxis(xs, points, plotLeft, plotRight, dateY)
 	return c.png()
@@ -172,22 +221,24 @@ const (
 	sizeCellDate = 24
 )
 
-// MuscleGroupProgress draws the top weight of every exercise that has enough data.
+// MuscleGroupProgress draws the top weight of every exercise that has enough data
+// (the most reps in a set for exercises without weight).
 // Each exercise gets its own small chart with its own scale: exercises of one group
 // differ in weight several times, and on a common axis every line would look flat.
 // The time axis is shared, so the charts can be compared by date.
 func (Renderer) MuscleGroupProgress(groupName string, series []domain.ExerciseProgressSeries) ([]byte, error) {
-	var shown []domain.ExerciseProgressSeries
+	var shown []sparkSeries
 	var first, last time.Time
 	for _, s := range series {
-		if len(s.Points) < minPoints {
+		kind, points := domain.ChartSeries(s.Points)
+		if len(points) < minPoints {
 			continue
 		}
-		shown = append(shown, s)
-		if from := s.Points[0].Date; first.IsZero() || from.Before(first) {
+		shown = append(shown, newSparkSeries(s.ExerciseName, kind, points))
+		if from := points[0].Date; first.IsZero() || from.Before(first) {
 			first = from
 		}
-		if to := s.Points[len(s.Points)-1].Date; to.After(last) {
+		if to := points[len(points)-1].Date; to.After(last) {
 			last = to
 		}
 	}
@@ -202,7 +253,7 @@ func (Renderer) MuscleGroupProgress(groupName string, series []domain.ExercisePr
 		return nil, err
 	}
 	c.text(c.fit(capitalize(groupName), sizeTitle, canvasWidth-2*margin), margin, titleY, sizeTitle, colorInk, alignLeft)
-	c.text("Макс. вес по упражнениям, кг · "+period(first, last), margin, subtitleY, sizeLabel, colorMuted, alignLeft)
+	c.text("Лучший подход по упражнениям · "+period(first, last), margin, subtitleY, sizeLabel, colorMuted, alignLeft)
 
 	cellWidth := (canvasWidth - 2*margin - (columns-1)*cellGap) / columns
 	for i, s := range shown {
@@ -213,24 +264,52 @@ func (Renderer) MuscleGroupProgress(groupName string, series []domain.ExercisePr
 	return c.png()
 }
 
-// sparkCell draws one exercise: its name, the current weight with the change
-// since the first workout of the period, and a small line.
-func (c *canvas) sparkCell(s domain.ExerciseProgressSeries, left, right, top int, x func(time.Time) int) {
-	values := make([]float64, len(s.Points))
-	for i, p := range s.Points {
-		values[i] = p.MaxWeight
+// sparkSeries is what a small chart shows: one number per workout and what the number is.
+type sparkSeries struct {
+	name   string
+	unit   string
+	values []float64
+	dates  []time.Time
+}
+
+func newSparkSeries(name string, kind domain.LoadKind, points []domain.ExerciseProgressPoint) sparkSeries {
+	s := sparkSeries{name: name, unit: "кг"}
+	weighted := false
+	for _, p := range points {
+		weighted = weighted || p.MaxWeight > 0
 	}
+	if l := loadLabel(kind); l != "" {
+		s.name += " · " + l
+	}
+	if kind != domain.LoadWeight || !weighted {
+		s.unit = "повт."
+	}
+	for _, p := range points {
+		v := p.MaxWeight
+		if s.unit == "повт." {
+			v = float64(p.MaxReps)
+		}
+		s.values = append(s.values, v)
+		s.dates = append(s.dates, p.Date)
+	}
+	return s
+}
+
+// sparkCell draws one exercise: its name, the current value with the change
+// since the first workout of the period, and a small line.
+func (c *canvas) sparkCell(s sparkSeries, left, right, top int, x func(time.Time) int) {
+	values := s.values
 	current := values[len(values)-1]
 
-	c.text(c.fit(s.ExerciseName, sizeLabel, right-left), left, top+cellNameY, sizeLabel, colorSecondary, alignLeft)
-	stat := number(current) + " кг"
+	c.text(c.fit(s.name, sizeLabel, right-left), left, top+cellNameY, sizeLabel, colorSecondary, alignLeft)
+	stat := number(current) + " " + s.unit
 	c.text(stat, left, top+cellStatY, sizeStat, colorInk, alignLeft)
 	delta, deltaColor := "без изменений", colorMuted
 	switch change := current - values[0]; {
 	case change > 0:
-		delta, deltaColor = "+"+number(change)+" кг", colorGood
+		delta, deltaColor = "+"+number(change)+" "+s.unit, colorGood
 	case change < 0:
-		delta, deltaColor = number(change)+" кг", colorSecondary
+		delta, deltaColor = number(change)+" "+s.unit, colorSecondary
 	}
 	c.text(delta, left+c.textWidth(stat, sizeStat)+18, top+cellStatY, sizeLabel, deltaColor, alignLeft)
 
@@ -238,7 +317,7 @@ func (c *canvas) sparkCell(s domain.ExerciseProgressSeries, left, right, top int
 	y := linear{d0: lo, d1: hi, r0: top + sparkBot - sparkPad, r1: top + sparkTop + sparkPad}
 	pts := make([]point, len(values))
 	for i, v := range values {
-		pts[i] = point{x(s.Points[i].Date), y.at(v)}
+		pts[i] = point{x(s.dates[i]), y.at(v)}
 	}
 	area := append([]point{}, pts...)
 	area = append(area, point{pts[len(pts)-1].x, top + sparkBot}, point{pts[0].x, top + sparkBot})
@@ -251,6 +330,6 @@ func (c *canvas) sparkCell(s domain.ExerciseProgressSeries, left, right, top int
 	c.dot(pts[len(pts)-1], dotRadius)
 
 	l := labels{c: c, size: sizeCellDate, color: colorMuted}
-	l.put(shortDate(s.Points[len(s.Points)-1].Date), pts[len(pts)-1].x, top+cellDateY, left, right)
-	l.put(shortDate(s.Points[0].Date), pts[0].x, top+cellDateY, left, right)
+	l.put(shortDate(s.dates[len(s.dates)-1]), pts[len(pts)-1].x, top+cellDateY, left, right)
+	l.put(shortDate(s.dates[0]), pts[0].x, top+cellDateY, left, right)
 }

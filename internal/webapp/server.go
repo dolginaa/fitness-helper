@@ -88,6 +88,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/groups/{id}/chart.png", s.image(s.groupChart))
 
 	mux.HandleFunc("POST /api/exercises/{id}/begin", s.api(s.beginExercise))
+	mux.HandleFunc("PUT /api/exercises/{id}/loads", s.api(s.setLoads))
+	mux.HandleFunc("PUT /api/exercises/{id}/kind", s.api(s.setKind))
 	mux.HandleFunc("POST /api/exercises/{id}/sets", s.api(s.addSet))
 	mux.HandleFunc("DELETE /api/exercises/{id}/sets/last", s.api(s.undoSet))
 	mux.HandleFunc("GET /api/exercises/{id}/progress", s.api(s.exerciseProgress))
@@ -261,7 +263,18 @@ func (s *Server) finishWorkout(r *http.Request, userID int64) (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	return finish{Saved: len(d.Exercises) > 0, Workout: workoutDTO(d)}, nil
+	res := finish{Saved: len(d.Exercises) > 0, Workout: workoutDTO(d)}
+	if !res.Saved {
+		return res, nil
+	}
+	// The workout is saved already: a failure of the report must not hide that.
+	rep, err := s.svc.WorkoutReport(r.Context(), userID, d)
+	if err != nil {
+		s.log.Error("webapp workout report", "err", err)
+		return res, nil
+	}
+	res.Report = reportDTO(rep)
+	return res, nil
 }
 
 func (s *Server) groups(r *http.Request, userID int64) (any, error) {
@@ -301,12 +314,13 @@ func (s *Server) createExercise(r *http.Request, userID int64) (any, error) {
 		return nil, err
 	}
 	var req struct {
-		Name string `json:"name"`
+		Name  string            `json:"name"`
+		Loads []domain.LoadKind `json:"loads"`
 	}
 	if err := readJSON(r, &req); err != nil {
 		return nil, err
 	}
-	ex, err := s.svc.CreateExercise(r.Context(), id, req.Name)
+	ex, err := s.svc.CreateExercise(r.Context(), id, req.Name, req.Loads)
 	if err != nil {
 		return nil, err
 	}
@@ -329,6 +343,25 @@ func (s *Server) beginExercise(r *http.Request, userID int64) (any, error) {
 	return exerciseLogDTO(log), nil
 }
 
+// setLoads sets the kinds of load of the exercise. The exercise is shared by everyone who uses the bot.
+func (s *Server) setLoads(r *http.Request, userID int64) (any, error) {
+	id, err := pathID(r)
+	if err != nil {
+		return nil, err
+	}
+	var req struct {
+		Loads []domain.LoadKind `json:"loads"`
+	}
+	if err := readJSON(r, &req); err != nil {
+		return nil, err
+	}
+	ex, err := s.svc.SetExerciseLoads(r.Context(), id, req.Loads)
+	if err != nil {
+		return nil, err
+	}
+	return exerciseDTO(ex), nil
+}
+
 // logging makes the exercise the one being logged. The chat shares the dialog state
 // with the page, so the user may have moved elsewhere there in the meantime.
 func (s *Server) logging(r *http.Request, userID int64) (int, error) {
@@ -338,6 +371,25 @@ func (s *Server) logging(r *http.Request, userID int64) (int, error) {
 	}
 	_, err = s.svc.BeginExercise(r.Context(), userID, id)
 	return id, err
+}
+
+// setKind chooses the kind of load the sets of the exercise are entered in, in the page and in the chat.
+func (s *Server) setKind(r *http.Request, userID int64) (any, error) {
+	var req struct {
+		Kind domain.LoadKind `json:"kind"`
+	}
+	if err := readJSON(r, &req); err != nil {
+		return nil, err
+	}
+	id, err := s.logging(r, userID)
+	if err != nil {
+		return nil, err
+	}
+	log, err := s.svc.SetLoadKind(r.Context(), userID, id, req.Kind)
+	if err != nil {
+		return nil, err
+	}
+	return exerciseLogDTO(log), nil
 }
 
 func (s *Server) addSet(r *http.Request, userID int64) (any, error) {

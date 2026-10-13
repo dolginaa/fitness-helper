@@ -21,12 +21,32 @@ func progress(weights ...float64) []domain.ExerciseProgressPoint {
 	points := make([]domain.ExerciseProgressPoint, 0, len(weights))
 	for i, w := range weights {
 		sets := []domain.SetEntry{{Reps: 10, Weight: w}, {Reps: 10, Weight: w}, {Reps: 8 + i, Weight: w}}
-		points = append(points, domain.ExerciseProgressPoint{
-			Date:          now.AddDate(0, 0, -7*(len(weights)-1-i)),
-			MaxWeight:     domain.MaxWeightFromSets(sets),
-			WorkingWeight: domain.WorkingWeightFromSets(sets),
-			Sets:          sets,
-		})
+		points = append(points, domain.NewProgressPoint(i+1, now.AddDate(0, 0, -7*(len(weights)-1-i)), sets))
+	}
+	return points
+}
+
+// bandProgress builds weekly workouts on a band, with the level going down and the reps up.
+func bandProgress(levels ...int) []domain.ExerciseProgressPoint {
+	now := time.Now()
+	points := make([]domain.ExerciseProgressPoint, 0, len(levels))
+	for i, level := range levels {
+		sets := []domain.SetEntry{
+			{Reps: 8 + i, Kind: domain.LoadBand, Band: level},
+			{Reps: 7 + i, Kind: domain.LoadBand, Band: level},
+		}
+		points = append(points, domain.NewProgressPoint(i+1, now.AddDate(0, 0, -7*(len(levels)-1-i)), sets))
+	}
+	return points
+}
+
+// bodyweightProgress builds weekly workouts of the body only.
+func bodyweightProgress(reps ...int) []domain.ExerciseProgressPoint {
+	now := time.Now()
+	points := make([]domain.ExerciseProgressPoint, 0, len(reps))
+	for i, r := range reps {
+		sets := []domain.SetEntry{{Reps: r, Kind: domain.LoadBodyweight}, {Reps: r - 2, Kind: domain.LoadBodyweight}}
+		points = append(points, domain.NewProgressPoint(i+1, now.AddDate(0, 0, -7*(len(reps)-1-i)), sets))
 	}
 	return points
 }
@@ -75,6 +95,41 @@ func TestExerciseProgressFlatLine(t *testing.T) {
 	assertPNG(t, data, exerciseHeight)
 }
 
+func TestExerciseProgressOfBandAndBody(t *testing.T) {
+	t.Parallel()
+	data, err := New().ExerciseProgress("Подтягивания", bandProgress(5, 5, 4, 3))
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertPNG(t, data, exerciseHeight)
+	if data, err = New().ExerciseProgress("Отжимания", bodyweightProgress(10, 12, 15)); err != nil {
+		t.Fatal(err)
+	}
+	assertPNG(t, data, exerciseHeight)
+}
+
+func TestExerciseProgressMixedKinds(t *testing.T) {
+	t.Parallel()
+	// Weight and band workouts are not drawn on one axis: the latest kind with enough points wins.
+	points := append(progress(40, 45), bandProgress(5, 4)...)
+	for i := range points {
+		points[i].WorkoutID = i + 1
+		points[i].Date = time.Now().AddDate(0, 0, -(len(points)-i)*7)
+	}
+	data, err := New().ExerciseProgress("Подтягивания", points)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertPNG(t, data, exerciseHeight)
+	// One band workout is not a chart, even though the weight ones are.
+	if _, err := New().ExerciseProgress("Подтягивания", append(progress(40, 45), bandProgress(5)...)); err != nil {
+		t.Fatalf("weight workouts must still be drawn: %v", err)
+	}
+	if _, err := New().ExerciseProgress("Подтягивания", append(bodyweightProgress(10), bandProgress(5)...)); !errors.Is(err, domain.ErrNotEnoughData) {
+		t.Fatalf("want ErrNotEnoughData, got %v", err)
+	}
+}
+
 func TestExerciseProgressWithoutWeight(t *testing.T) {
 	t.Parallel()
 	data, err := New().ExerciseProgress("Планка", progress(0, 0, 0, 0))
@@ -110,16 +165,18 @@ func TestMuscleGroupProgress(t *testing.T) {
 		{ExerciseID: 1, ExerciseName: "Жим ногами", Points: progress(100, 110, 120)},
 		{ExerciseID: 2, ExerciseName: "Румынская тяга", Points: progress(40, 45, 50, 50)},
 		{ExerciseID: 3, ExerciseName: "Разгибания ног сидя", Points: progress(35, 30)},
+		{ExerciseID: 5, ExerciseName: "Подтягивания", Points: bandProgress(5, 4, 3)},
+		{ExerciseID: 6, ExerciseName: "Отжимания", Points: bodyweightProgress(10, 12)},
 		{ExerciseID: 4, ExerciseName: "Икры", Points: progress(40)},
 	}
 	data, err := New().MuscleGroupProgress("ноги", series)
 	if err != nil {
 		t.Fatal(err)
 	}
-	// Three exercises have enough data: two rows of the grid.
-	assertPNG(t, data, groupTop+2*cellHeight)
+	// Five exercises have enough data: three rows of the grid.
+	assertPNG(t, data, groupTop+3*cellHeight)
 
-	if _, err := New().MuscleGroupProgress("ноги", series[3:]); !errors.Is(err, domain.ErrNotEnoughData) {
+	if _, err := New().MuscleGroupProgress("ноги", series[len(series)-1:]); !errors.Is(err, domain.ErrNotEnoughData) {
 		t.Fatalf("want ErrNotEnoughData, got %v", err)
 	}
 }

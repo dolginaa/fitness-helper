@@ -8,7 +8,8 @@ CREATE TABLE muscle_groups (
 CREATE TABLE exercises (
     id SERIAL PRIMARY KEY,
     name VARCHAR(100) NOT NULL,
-    muscle_group_id INT NOT NULL REFERENCES muscle_groups (id) ON DELETE CASCADE
+    muscle_group_id INT NOT NULL REFERENCES muscle_groups (id) ON DELETE CASCADE,
+    loads TEXT[] NOT NULL DEFAULT '{weight}'
 );
 
 CREATE INDEX idx_exercises_muscle_group ON exercises (muscle_group_id);
@@ -17,7 +18,8 @@ CREATE TABLE workouts (
     id SERIAL PRIMARY KEY,
     user_id BIGINT NOT NULL,
     date TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    status VARCHAR(20) NOT NULL CHECK (status IN ('active', 'completed'))
+    status VARCHAR(20) NOT NULL CHECK (status IN ('active', 'completed')),
+    finished_at TIMESTAMPTZ
 );
 
 CREATE INDEX idx_workouts_user_date ON workouts (user_id, date DESC);

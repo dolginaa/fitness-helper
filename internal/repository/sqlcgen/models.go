@@ -9,9 +9,10 @@ import (
 )
 
 type Exercise struct {
-	ID            int32  `json:"id"`
-	Name          string `json:"name"`
-	MuscleGroupID int32  `json:"muscle_group_id"`
+	ID            int32    `json:"id"`
+	Name          string   `json:"name"`
+	MuscleGroupID int32    `json:"muscle_group_id"`
+	Loads         []string `json:"loads"`
 }
 
 type MuscleGroup struct {
@@ -33,10 +34,11 @@ type UserWorkoutState struct {
 }
 
 type Workout struct {
-	ID     int32              `json:"id"`
-	UserID int64              `json:"user_id"`
-	Date   pgtype.Timestamptz `json:"date"`
-	Status string             `json:"status"`
+	ID         int32              `json:"id"`
+	UserID     int64              `json:"user_id"`
+	Date       pgtype.Timestamptz `json:"date"`
+	Status     string             `json:"status"`
+	FinishedAt pgtype.Timestamptz `json:"finished_at"`
 }
 
 type WorkoutExercise struct {

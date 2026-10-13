@@ -20,7 +20,30 @@ let tg = null;
 const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const num = (v) => String(Math.round(v * 100) / 100);
 const cap = (s) => s.charAt(0).toUpperCase() + s.slice(1);
-const setsText = (sets) => (sets.length ? sets.map((s) => `${s.reps}×${num(s.weight)}`).join(', ') : 'нет данных');
+const kindOf = (s) => s.kind || 'weight';
+const kindNames = { weight: 'Вес', bodyweight: 'Свой вес', band: 'Резинка' };
+const kindOrder = ['weight', 'bodyweight', 'band'];
+const MAX_BAND = 10;
+
+// A set in a list: 10×50, 15×св.вес, 15×св.вес+5, 12×рез.4 (the same as in the chat).
+function setText(s) {
+  switch (kindOf(s)) {
+    case 'bodyweight': return `${s.reps}×св.вес${s.weight > 0 ? '+' + num(s.weight) : ''}`;
+    case 'band': return `${s.reps}×рез.${s.band}`;
+    default: return `${s.reps}×${num(s.weight)}`;
+  }
+}
+
+// A set written out on the screen of an exercise.
+function setLine(s) {
+  switch (kindOf(s)) {
+    case 'bodyweight': return `${s.reps} × свой вес${s.weight > 0 ? ' +' + num(s.weight) + ' кг' : ''}`;
+    case 'band': return `${s.reps} × резинка ${s.band}`;
+    default: return `${s.reps} × ${num(s.weight)} кг`;
+  }
+}
+
+const setsText = (sets) => (sets.length ? sets.map(setText).join(', ') : 'нет данных');
 const thousands = (v) => Math.round(v).toLocaleString('ru-RU');
 const shortDate = (iso) => new Intl.DateTimeFormat('ru-RU', { day: '2-digit', month: '2-digit' }).format(new Date(iso));
 const longDate = (iso) => cap(new Intl.DateTimeFormat('ru-RU', { weekday: 'short', day: 'numeric', month: 'long', year: 'numeric' }).format(new Date(iso)));
@@ -129,12 +152,19 @@ async function render() {
 
 const chev = '<span class="chev" aria-hidden="true">›</span>';
 
-function stats(w) {
-  return `<div class="card pad stats">
-    <div class="stat"><b>${w.exercises.length}</b><span>упражнений</span></div>
-    <div class="stat"><b>${w.setCount}</b><span>подходов</span></div>
-    <div class="stat"><b>${thousands(w.volume)}</b><span>кг тоннаж</span></div>
-  </div>`;
+// The numbers of a workout; with the report of a finished one also its duration and how it compares
+// to the previous workout. Tonnage is left out when nothing was lifted (bands, the body).
+function stats(w, r) {
+  const items = [[w.exercises.length, 'упражнений'], [w.setCount, 'подходов']];
+  if (r) items.push([r.reps, 'повторов']);
+  if (w.volume > 0) items.push([thousands(w.volume), 'кг тоннаж']);
+  if (r && r.durationMin > 0) items.push([duration(r.durationMin), 'длительность']);
+  if (r && w.volume > 0 && r.prevVolume > 0) {
+    const p = percent(r.prevVolume, w.volume);
+    items.push([p === '0%' ? '=' : p, 'тоннаж к прошлой']);
+  }
+  return `<div class="card pad stats">${items.map(([value, label]) =>
+    `<div class="stat"><b>${value}</b><span>${label}</span></div>`).join('')}</div>`;
 }
 
 function groupTiles(groups, screen) {
@@ -196,6 +226,7 @@ const screens = {
       <div class="section">Нет в списке?</div>
       <form data-form="new-exercise" data-id="${id}">
         <input class="field" name="name" maxlength="100" placeholder="Название своего упражнения" autocomplete="off">
+        <div class="card checks">${kindOrder.map((k, i) => checkRow(k, i === 0)).join('')}</div>
         <button class="btn quiet">Добавить упражнение</button>
       </form>`;
   },
@@ -204,13 +235,22 @@ const screens = {
     return exerciseView(await api('POST', `exercises/${id}/begin`));
   },
 
+  async loads({ id }) {
+    const log = await api('POST', `exercises/${id}/begin`);
+    const on = new Set(log.exercise.loads);
+    return `<h1>${esc(log.exercise.name)}</h1>
+      <p class="sub">С чем вы делаете это упражнение? Отметьте всё, что подходит: если вариантов несколько, на экране подхода появится переключатель. Это общая настройка упражнения.</p>
+      <div class="card checks" data-loads="${id}">${kindOrder.map((k) => checkRow(k, on.has(k))).join('')}</div>
+      <button class="btn" data-act="back">Готово</button>`;
+  },
+
   async finished({ result }) {
     if (!result.saved) {
       return `<h1>Тренировка не сохранена</h1><p class="sub">В ней не было ни одного подхода.</p>
         <button class="btn" data-act="home">На главную</button>`;
     }
     return `<h1>Тренировка завершена</h1><p class="sub">Хорошая работа!</p>
-      ${stats(result.workout)}${workoutCards(result.workout)}
+      ${stats(result.workout, result.report)}${result.report ? reportHtml(result.report) : ''}${workoutCards(result.workout)}
       <button class="btn" data-act="home">На главную</button>`;
   },
 
@@ -272,6 +312,64 @@ const screens = {
   },
 };
 
+function checkRow(kind, checked) {
+  return `<label class="row check"><input type="checkbox" data-load="${kind}"${checked ? ' checked' : ''}>
+    <span class="main">${kindNames[kind]}</span></label>`;
+}
+
+const percent = (before, now) => {
+  if (!before) return '';
+  const p = Math.round((now - before) / before * 100);
+  return p > 0 ? `+${p}%` : p < 0 ? `−${-p}%` : '0%';
+};
+
+const daysAgo = (n) => (n <= 0 ? 'сегодня' : n === 1 ? 'вчера' : `${n} дн. назад`);
+const duration = (min) => (min < 60 ? `${min} мин` : min % 60 ? `${Math.floor(min / 60)} ч ${min % 60} мин` : `${min / 60} ч`);
+
+function recordText(r) {
+  switch (r.kind) {
+    case 'weight': return `вес ${num(r.value)} кг (было ${num(r.previous)})`;
+    case 'volume': return `объём ${thousands(r.value)} кг (было ${thousands(r.previous)})`;
+    case 'reps': return `${num(r.value)} повторов в подходе (было ${num(r.previous)})`;
+    default: return `${num(r.value)} повторов за тренировку (было ${num(r.previous)})`;
+  }
+}
+
+// What changed against the last time; exercises that stayed as they were are left out.
+function changeText(c) {
+  const parts = [];
+  if (c.kind === 'weight') {
+    if (c.before.maxWeight !== c.now.maxWeight) parts.push(`${num(c.before.maxWeight)} → ${num(c.now.maxWeight)} кг`);
+    const p = c.before.volume !== c.now.volume ? percent(c.before.volume, c.now.volume) : '';
+    if (p) parts.push('объём ' + p);
+  } else {
+    if (c.kind === 'band' && c.before.band !== c.now.band) parts.push(`резинка ${c.before.band} → ${c.now.band}`);
+    if (c.before.totalReps !== c.now.totalReps) parts.push(`повторов ${c.before.totalReps} → ${c.now.totalReps}`);
+  }
+  return parts.length ? `${esc(c.exercise)}: ${parts.join(', ')}` : '';
+}
+
+// The summary of a finished workout under its numbers: what was better than ever,
+// how it went against last time and how often the user trains.
+function reportHtml(r) {
+  let html = '';
+  if (r.records.length) {
+    html += `<div class="section">🏆 Рекорды</div><div class="card">${r.records.map((x) =>
+      `<div class="row"><span class="main"><div class="title">${esc(x.exercise)}</div><div class="desc">${recordText(x)}</div></span></div>`).join('')}</div>`;
+  }
+  const changes = r.changes.map(changeText).filter(Boolean);
+  if (changes.length) {
+    html += `<div class="section">📈 Против прошлого раза</div><div class="card">${changes.map((t) =>
+      `<div class="row"><span class="main">${t}</span></div>`).join('')}</div>`;
+  }
+  if (r.firstTime.length) html += `<p class="note">🆕 Впервые: ${esc(r.firstTime.join(', '))}</p>`;
+  const freq = [];
+  if (r.weekWorkouts > 1) freq.push(`тренировок за 7 дней: ${r.weekWorkouts}`);
+  if (r.prevDate) freq.push(`прошлая — ${daysAgo(r.daysSincePrev)}`);
+  if (freq.length) html += `<p class="note">📅 ${freq.join(' · ')}</p>`;
+  return html;
+}
+
 function workoutCards(w) {
   const groups = new Map();
   for (const ex of w.exercises) {
@@ -287,36 +385,51 @@ function workoutCards(w) {
   return html;
 }
 
+// The fields of a set for the kind of load: reps and the weight, the extra weight or the band level.
+const setFields = {
+  weight: { id: 'weight', label: 'Вес, кг', by: 2.5, min: 0, max: 1000, start: (n) => num(n.weight || 0) },
+  bodyweight: { id: 'weight', label: 'Доп. вес, кг', by: 2.5, min: 0, max: 1000, start: (n) => num(n.weight || 0) },
+  band: { id: 'band', label: `Резинка, уровень (1–${MAX_BAND})`, by: 1, min: 1, max: MAX_BAND, start: (n) => String(n.band || 5) },
+};
+
 // The screen of the exercise being logged: today's sets and a form prefilled
 // with the most likely next set.
 function exerciseView(log) {
   const id = log.exercise.id;
-  const next = log.suggestion || { reps: 10, weight: 0 };
+  const kind = log.kind || 'weight';
+  const field = setFields[kind];
+  const next = log.suggestion || { reps: 10 };
   const last = log.sets.length - 1;
   const today = log.sets.map((s, i) =>
-    `<div class="row"><span class="num">${i + 1}</span><span class="main">${s.reps} × ${num(s.weight)} кг</span>
+    `<div class="row"><span class="num">${i + 1}</span><span class="main">${setLine(s)}</span>
      ${i === last ? `<button class="link danger" data-act="undo" data-id="${id}">Убрать</button>` : ''}</div>`).join('');
+  const pills = log.exercise.loads.length > 1
+    ? `<div class="pills" role="group" aria-label="Нагрузка">${log.exercise.loads.map((k) =>
+      `<button type="button" class="pill${k === kind ? ' on' : ''}" aria-pressed="${k === kind}" data-act="set-kind" data-id="${id}" data-kind="${k}">${kindNames[k]}</button>`).join('')}</div>`
+    : '';
   return `<h1>${esc(log.exercise.name)}</h1>
     <p class="sub">${log.lastAt ? `Прошлый раз, ${shortDate(log.lastAt)}: ${setsText(log.lastSets)}` : 'Раньше не делали'}</p>
+    ${pills}
     ${today ? `<div class="section">Сегодня</div><div class="card">${today}</div>` : ''}
     <div class="section">${today ? 'Следующий подход' : 'Первый подход'}</div>
-    <form class="card" data-form="set" data-id="${id}">
+    <form class="card" data-form="set" data-id="${id}" data-kind="${kind}">
       <div class="stepper">
         <label for="reps">Повторы</label>
-        <button type="button" data-step="reps" data-by="-1" aria-label="Меньше повторов">−</button>
+        <button type="button" data-step="reps" data-by="-1" data-min="1" data-max="1000" aria-label="Меньше повторов">−</button>
         <input id="reps" name="reps" inputmode="numeric" autocomplete="off" value="${next.reps}">
-        <button type="button" data-step="reps" data-by="1" aria-label="Больше повторов">+</button>
+        <button type="button" data-step="reps" data-by="1" data-min="1" data-max="1000" aria-label="Больше повторов">+</button>
       </div>
       <div class="stepper">
-        <label for="weight">Вес, кг</label>
-        <button type="button" data-step="weight" data-by="-2.5" aria-label="Меньше вес">−</button>
-        <input id="weight" name="weight" inputmode="decimal" autocomplete="off" value="${num(next.weight)}">
-        <button type="button" data-step="weight" data-by="2.5" aria-label="Больше вес">+</button>
+        <label for="${field.id}">${field.label}</label>
+        <button type="button" data-step="${field.id}" data-by="${-field.by}" data-min="${field.min}" data-max="${field.max}" aria-label="Меньше">−</button>
+        <input id="${field.id}" name="${field.id}" inputmode="${kind === 'band' ? 'numeric' : 'decimal'}" autocomplete="off" value="${field.start(next)}">
+        <button type="button" data-step="${field.id}" data-by="${field.by}" data-min="${field.min}" data-max="${field.max}" aria-label="Больше">+</button>
       </div>
     </form>
     <button class="btn" data-act="add-set" data-id="${id}">Записать подход</button>
     <button class="btn quiet" data-act="back">${today ? 'Готово' : 'К упражнениям'}</button>
-    <img class="chart" data-chart="exercises/${id}/chart.png" alt="График макс. веса и объёма" hidden>`;
+    <button class="link" data-go="loads" data-id="${id}">Нагрузка упражнения</button>
+    <img class="chart" data-chart="exercises/${id}/chart.png" alt="График упражнения" hidden>`;
 }
 
 function showExercise(log) {
@@ -326,11 +439,18 @@ function showExercise(log) {
 
 const parseNumber = (text) => parseFloat(String(text).replace(',', '.'));
 
+// readSet reads the form; null if the numbers do not make a set.
 function readSet() {
+  const kind = app.querySelector('form[data-form="set"]').dataset.kind;
   const reps = parseNumber(app.querySelector('#reps').value);
+  if (!Number.isInteger(reps) || reps < 1 || reps > 1000) return null;
+  if (kind === 'band') {
+    const band = parseNumber(app.querySelector('#band').value);
+    return Number.isInteger(band) && band >= 1 && band <= MAX_BAND ? { reps, band, kind } : null;
+  }
   const weight = parseNumber(app.querySelector('#weight').value);
-  if (!Number.isInteger(reps) || reps < 1 || reps > 1000 || !(weight >= 0) || weight > 1000) return null;
-  return { reps, weight };
+  if (!(weight >= 0) || weight > 1000) return null;
+  return kind === 'bodyweight' ? { reps, weight, kind } : { reps, weight };
 }
 
 // ---------- actions
@@ -354,9 +474,13 @@ const actions = {
 
   async 'add-set'(el) {
     const set = readSet();
-    if (!set) { toast('Повторы — целое число от 1, вес — от 0 кг.'); return; }
+    if (!set) { toast(`Повторы — целое число от 1; вес — от 0 кг; резинка — от 1 до ${MAX_BAND}.`); return; }
     showExercise(await api('POST', `exercises/${el.dataset.id}/sets`, set));
     haptic('light');
+  },
+
+  async 'set-kind'(el) {
+    showExercise(await api('PUT', `exercises/${el.dataset.id}/kind`, { kind: el.dataset.kind }));
   },
 
   async undo(el) {
@@ -399,9 +523,8 @@ app.addEventListener('click', (e) => {
   const step = e.target.closest('[data-step]');
   if (step) {
     const input = app.querySelector('#' + step.dataset.step);
-    const min = step.dataset.step === 'reps' ? 1 : 0;
     const value = (parseNumber(input.value) || 0) + Number(step.dataset.by);
-    input.value = num(Math.min(1000, Math.max(min, value)));
+    input.value = num(Math.min(Number(step.dataset.max), Math.max(Number(step.dataset.min), value)));
     return;
   }
   const link = e.target.closest('[data-go]');
@@ -411,6 +534,25 @@ app.addEventListener('click', (e) => {
   }
   const el = e.target.closest('[data-act]');
   if (el && actions[el.dataset.act] && confirmed(el)) run(el, actions[el.dataset.act]);
+});
+
+// Ticking a kind of load on the settings screen saves it at once; the first kind stays the default.
+app.addEventListener('change', async (e) => {
+  const box = e.target.closest('[data-load]');
+  const panel = e.target.closest('[data-loads]');
+  if (!box || !panel) return;
+  const checked = kindOrder.filter((k) => panel.querySelector(`[data-load="${k}"]`).checked);
+  if (!checked.length) {
+    box.checked = true;
+    toast('У упражнения должен остаться хотя бы один вид нагрузки.');
+    return;
+  }
+  try {
+    await api('PUT', `exercises/${panel.dataset.loads}/loads`, { loads: checked });
+  } catch (err) {
+    box.checked = !box.checked;
+    toast(messageFor(err));
+  }
 });
 
 app.addEventListener('submit', (e) => {
@@ -425,8 +567,10 @@ app.addEventListener('submit', (e) => {
   if (form.dataset.form === 'new-exercise') {
     const name = form.elements.name.value.trim();
     if (name.length < 2) { toast('Напишите название упражнения.'); return; }
+    const loads = kindOrder.filter((k) => form.querySelector(`[data-load="${k}"]`).checked);
+    if (!loads.length) { toast('Отметьте хотя бы один вид нагрузки.'); return; }
     run(form.querySelector('button'), async () => {
-      const log = await api('POST', `groups/${form.dataset.id}/exercises`, { name });
+      const log = await api('POST', `groups/${form.dataset.id}/exercises`, { name, loads });
       go('exercise', { id: log.exercise.id });
     });
   }

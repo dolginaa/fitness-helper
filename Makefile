@@ -1,4 +1,4 @@
-.PHONY: dev docker-up docker-down migrate-up migrate-down sqlc run test test-integration webapp-preview build tidy
+.PHONY: dev docker-up docker-down migrate-up migrate-down sqlc run test test-integration webapp-preview exercises-report exercises-dedupe build tidy
 
 DATABASE_URL ?= postgres://fitness:fitness@localhost:5432/fitness?sslmode=disable
 
@@ -35,6 +35,13 @@ test-integration:
 webapp-preview:
 	@echo "Откройте http://127.0.0.1:8099/  (остановить: Ctrl+C)"
 	@WEBAPP_PREVIEW=127.0.0.1:8099 CHART_EXPORT=$(CURDIR)/export.json go test ./internal/webapp -run TestPreview -timeout 0 -count=1
+
+# Чистка списка упражнений. report и dedupe без APPLY=1 ничего не меняют.
+exercises-report:
+	go run ./cmd/exercises report
+
+exercises-dedupe:
+	go run ./cmd/exercises dedupe $(if $(APPLY),-apply)
 
 build:
 	go build -o bin/bot ./cmd/bot

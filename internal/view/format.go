@@ -22,8 +22,45 @@ func Weight(w float64) string {
 	return strconv.FormatFloat(math.Round(w*100)/100, 'f', -1, 64)
 }
 
+// Set is a set in a list: 10×50, 15×св.вес, 15×св.вес+5, 12×рез.4.
 func Set(s domain.SetEntry) string {
-	return strconv.Itoa(s.Reps) + "×" + Weight(s.Weight)
+	reps := strconv.Itoa(s.Reps)
+	switch s.Load() {
+	case domain.LoadBodyweight:
+		if s.Weight > 0 {
+			return reps + "×св.вес+" + Weight(s.Weight)
+		}
+		return reps + "×св.вес"
+	case domain.LoadBand:
+		return reps + "×рез." + strconv.Itoa(s.Band)
+	}
+	return reps + "×" + Weight(s.Weight)
+}
+
+// SetLine is a set written out for the screen of an exercise: "10 × 50 кг", "15 × свой вес".
+func SetLine(s domain.SetEntry) string {
+	reps := strconv.Itoa(s.Reps) + " × "
+	switch s.Load() {
+	case domain.LoadBodyweight:
+		if s.Weight > 0 {
+			return reps + "свой вес +" + Weight(s.Weight) + " кг"
+		}
+		return reps + "свой вес"
+	case domain.LoadBand:
+		return reps + "резинка " + strconv.Itoa(s.Band)
+	}
+	return reps + Weight(s.Weight) + " кг"
+}
+
+// LoadName is the name of a kind of load for buttons and headings.
+func LoadName(k domain.LoadKind) string {
+	switch k {
+	case domain.LoadBodyweight:
+		return "Свой вес"
+	case domain.LoadBand:
+		return "Резинка"
+	}
+	return "Вес"
 }
 
 func Sets(sets []domain.SetEntry) string {
@@ -118,4 +155,42 @@ func Split(text string, limit int) []string {
 func roundTo(v float64, digits int) float64 {
 	p := math.Pow(10, float64(digits))
 	return math.Round(v*p) / p
+}
+
+// Duration prints 52 minutes as "52 мин" and 72 as "1 ч 12 мин".
+func Duration(d time.Duration) string {
+	minutes := int(d.Round(time.Minute).Minutes())
+	if minutes < 60 {
+		return strconv.Itoa(minutes) + " мин"
+	}
+	if minutes%60 == 0 {
+		return strconv.Itoa(minutes/60) + " ч"
+	}
+	return strconv.Itoa(minutes/60) + " ч " + strconv.Itoa(minutes%60) + " мин"
+}
+
+// Percent prints the change from before to now: "+8%", "−3%", "0%".
+func Percent(before, now float64) string {
+	if before == 0 {
+		return ""
+	}
+	p := int(math.Round((now - before) / before * 100))
+	switch {
+	case p > 0:
+		return "+" + strconv.Itoa(p) + "%"
+	case p < 0:
+		return "−" + strconv.Itoa(-p) + "%"
+	}
+	return "0%"
+}
+
+// DaysAgo says how long ago a day was, counted in calendar days.
+func DaysAgo(days int) string {
+	switch {
+	case days <= 0:
+		return "сегодня"
+	case days == 1:
+		return "вчера"
+	}
+	return strconv.Itoa(days) + " дн. назад"
 }
